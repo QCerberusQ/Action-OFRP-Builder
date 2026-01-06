@@ -107,11 +107,10 @@ jobs:
         git clone ${{ github.event.inputs.DEVICE_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.DEVICE_PATH }}
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
-    - name: Clone dummy kernel
+    - name: Copy dummy kernel
       run: |
-        mkdir -p kernel/nothing/Spacewar
-        git clone https://github.com/QCerberusQ/OFRP-device_nothing_Spacewar kernel/nothing/Spacewar
-
+        mkdir -p kernel/nothing
+        cp -r device/nothing/Spacewar/kernel/nothing/Spacewar kernel/nothing/
 
     - name: Clone common tree
       if: |
