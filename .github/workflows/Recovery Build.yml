@@ -109,8 +109,9 @@ jobs:
 
     - name: Copy dummy kernel
       run: |
-        mkdir -p kernel/nothing
-        cp -r device/nothing/Spacewar/kernel/nothing/Spacewar kernel/nothing/
+        cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
+        mkdir -p kernel/nothing/Spacewar
+        cp -r device/nothing/Spacewar/kernel/nothing/Spacewar/* kernel/nothing/Spacewar/
 
     - name: Clone common tree
       if: |
