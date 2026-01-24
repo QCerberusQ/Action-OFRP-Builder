@@ -78,11 +78,13 @@ jobs:
         sudo bash setup/install_android_sdk.sh
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
-    - name: Install OpenJDK
-      uses: actions/setup-java@v4
-      with:
-        distribution: 'zulu'
-        java-version: '11'
+    - name: Install OpenJDK 11 (Temurin compatible)
+      run: |
+        sudo apt update
+        sudo apt install -y openjdk-11-jdk
+        export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+        echo "JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64" >> $GITHUB_ENV
+        java -version
 
     - name: Setup SSH Keys
       if: ${{ startsWith(github.event.inputs.SYNC_URL, 'git@github.com') || 
