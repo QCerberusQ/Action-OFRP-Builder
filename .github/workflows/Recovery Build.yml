@@ -129,12 +129,12 @@ jobs:
       with:
         swap-size-gb: 12
 
-    - name: Copy prebuilt kernel to out
-      run: |
-        cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
-        mkdir -p out/target/product/Spacewar
-        cp device/nothing/Spacewar/prebuilt/boot.img-kernel \
-           out/target/product/Spacewar/kernel
+#    - name: Copy prebuilt kernel to out
+#      run: |
+#        cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
+#        mkdir -p out/target/product/Spacewar
+#        cp device/nothing/Spacewar/prebuilt/boot.img-kernel \
+#           out/target/product/Spacewar/kernel
 
     - name: Building recovery
       run: |
