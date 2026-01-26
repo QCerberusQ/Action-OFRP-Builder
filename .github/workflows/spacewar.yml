@@ -112,8 +112,8 @@ jobs:
     - name: Clone kernel tree
       run: |
         cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
-        git clone https://github.com/QCerberusQ/android_kernel_msm-5.4_nothing_sm7325 \
-          -b sm7325/v/mr kernel/nothing/sm7325
+        git clone https://github.com/QCerberusQ/android_kernel_nothing_sm7325 \
+          -b lineage-23.0 kernel/nothing/sm7325
 
     - name: Clone common tree
       if: |
