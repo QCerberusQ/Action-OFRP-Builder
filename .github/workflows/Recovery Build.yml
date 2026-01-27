@@ -109,12 +109,12 @@ jobs:
         git clone ${{ github.event.inputs.DEVICE_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.DEVICE_PATH }}
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
-    - name: Clone Kernel Source (LineageOS 23.0)
-      run: |
-        cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
-        # Kullanıcının belirttiği lineage-23.0 dalı çekiliyor
-        git clone https://github.com/LineageOS/android_kernel_nothing_sm7325 -b lineage-23.0 kernel/nothing/sm7325 --depth=1
-      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+#    - name: Clone Kernel Source (LineageOS 23.0)
+#      run: |
+#        cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
+#        # Kullanıcının belirttiği lineage-23.0 dalı çekiliyor
+#        git clone https://github.com/LineageOS/android_kernel_nothing_sm7325 -b lineage-23.0 kernel/nothing/sm7325 --depth=1
+#      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
       
 #    - name: Copy dummy kernel
 #      run: |
