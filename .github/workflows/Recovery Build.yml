@@ -14,11 +14,11 @@ on:
       DEVICE_TREE_URL:
         description: 'DEVICE_TREE_URL'
         required: true
-        default: 'https://github.com/QCerberusQ/test_orangefox_Spacewar'
+        default: 'https://github.com/QCerberusQ/OFRP-device_nothing_Spacewar'
       DEVICE_TREE_BRANCH:
         description: 'DEVICE_TREE_BRANCH'
         required: true
-        default: 'main'
+        default: 'master'
       DEVICE_PATH:
         description: 'DEVICE_PATH'
         required: true
