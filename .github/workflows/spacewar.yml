@@ -1,4 +1,4 @@
-name: Recovery Build
+name: Aidl Recovery Build
 
 on:
   workflow_dispatch:
