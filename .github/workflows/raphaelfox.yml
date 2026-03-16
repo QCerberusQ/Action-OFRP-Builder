@@ -70,7 +70,8 @@ jobs:
         sudo apt update && sudo apt upgrade -y
         DEBIAN_FRONTEND=noninteractive sudo apt install -yq \
             linux-modules-extra-$(uname -r) \
-            git python3 tar aria2
+            git python3 python-is-python3 tar aria2 \
+            cpio lz4 lzop liblz4-tool squashfs-tools libtinfo5
         git clone https://gitlab.com/OrangeFox/misc/scripts
         cd scripts
         sudo bash setup/android_build_env.sh
