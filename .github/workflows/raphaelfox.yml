@@ -14,7 +14,7 @@ on:
       DEVICE_TREE_URL:
         description: 'DEVICE_TREE_URL'
         required: true
-        default: 'https://github.com/QCerberusQ/orangefox_device_xiaomi_raphael'
+        default: 'https://github.com/QCerberusQ/ofox_device_xiaomi_raphael'
       DEVICE_TREE_BRANCH:
         description: 'DEVICE_TREE_BRANCH'
         required: true
