@@ -93,10 +93,6 @@ jobs:
         cd sync
         git pull origin master
         ./orangefox_sync.sh --branch ${{ github.event.inputs.MANIFEST_BRANCH }} --path ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
-        # R12.0 vendor tree - fox_12.1-R12-new branch
-        cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}/vendor/recovery
-        git fetch origin fox_12.1-R12-new
-        git checkout fox_12.1-R12-new
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
  
     - name: Clone device tree
@@ -104,18 +100,6 @@ jobs:
         cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
         git clone ${{ github.event.inputs.DEVICE_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.DEVICE_PATH }}
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
- 
-#    - name: Clone Kernel Source (LineageOS 23.0)
-#      run: |
-#        cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
-#        git clone https://github.com/LineageOS/android_kernel_nothing_sm7325 -b lineage-23.0 kernel/nothing/sm7325 --depth=1
-#      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
- 
-#    - name: Copy dummy kernel
-#      run: |
-#        cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
-#        mkdir -p kernel/nothing/Spacewar
-#        cp -r device/nothing/Spacewar/kernel/nothing/Spacewar/* kernel/nothing/Spacewar/
  
     - name: Clone common tree
       if: |
@@ -130,13 +114,6 @@ jobs:
       uses: pierotofy/set-swap-space@master
       with:
         swap-size-gb: 16
- 
-#    - name: Copy prebuilt kernel to out
-#      run: |
-#        cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
-#        mkdir -p out/target/product/Spacewar
-#        cp device/nothing/Spacewar/prebuilt/boot.img-kernel \
-#           out/target/product/Spacewar/kernel
  
     - name: Building recovery
       run: |
