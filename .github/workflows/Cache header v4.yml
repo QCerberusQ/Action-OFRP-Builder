@@ -1,4 +1,4 @@
-name: Spacewar Vendorboot
+name: Spacewar Cache Vendorboot
  
 on:
   workflow_dispatch:
