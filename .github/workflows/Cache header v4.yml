@@ -108,6 +108,17 @@ jobs:
         git pull origin master
         ./orangefox_sync.sh --branch ${{ github.event.inputs.MANIFEST_BRANCH }} --path ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+
+    - name: Fix fox_14.1 WLAN support
+      if: github.event.inputs.MANIFEST_BRANCH == '14.1'
+      run: |
+        cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
+        git clone https://github.com/adontoo/android_external_libmicrohttpd -b ofox-14.1 external/libmicrohttpd
+        rm -rf bionic
+        git clone https://github.com/adontoo/OrangeFox-android_platform_bionic bionic
+        cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}/bootable/recovery
+        git fetch https://github.com/ymdzq/OrangeFox_Recovery fox_14.1 && git cherry-pick 4aaf601 99e35fe 1ccd5e3
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
  
     - name: Clone device tree
       run: |
@@ -155,9 +166,13 @@ jobs:
         source build/envsetup.sh
         export ALLOW_MISSING_DEPENDENCIES=true
         set -e
-        lunch ${{ github.event.inputs.MAKEFILE_NAME }}-eng && make clean && mka adbd ${{ github.event.inputs.BUILD_TARGET }}image -j$(nproc --all)
+        if [[ "${{ github.event.inputs.MANIFEST_BRANCH }}" == "14.1" ]]; then
+          lunch ${{ github.event.inputs.MAKEFILE_NAME }}-ap2a-eng && make clean && mka adbd ${{ github.event.inputs.BUILD_TARGET }}image -j$(nproc --all)
+        else
+          lunch ${{ github.event.inputs.MAKEFILE_NAME }}-eng && make clean && mka adbd ${{ github.event.inputs.BUILD_TARGET }}image -j$(nproc --all)
+        fi
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
-
+      
     - name: Display ccache statistics
       if: github.event.inputs.USE_CCACHE == 'true'
       run: |
