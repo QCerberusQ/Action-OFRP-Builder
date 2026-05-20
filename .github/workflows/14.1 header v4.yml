@@ -69,7 +69,7 @@ jobs:
         DEBIAN_FRONTEND=noninteractive sudo apt install -yq \
             linux-modules-extra-$(uname -r) \
             git python3 python-is-python3 tar aria2 \
-            cpio lz4 lzop liblz4-tool squashfs-tools libtinfo6 ccache
+            cpio lz4 lzop liblz4-tool squashfs-tools libtinfo6
         git clone https://gitlab.com/OrangeFox/misc/scripts
         cd scripts
         sudo bash setup/android_build_env.sh
@@ -169,6 +169,5 @@ jobs:
           - **Manifest:** ${{ github.event.inputs.MANIFEST_BRANCH }}
           - **Device:** ${{ github.event.inputs.DEVICE_NAME }}
           - **Target:** ${{ github.event.inputs.BUILD_TARGET }}
-          - **Note:** Built with ccache optimization
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
