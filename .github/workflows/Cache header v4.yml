@@ -1,4 +1,4 @@
-name: Spacewar Cache Vendorboot
+name: Spacewar 14.1 Vendorboot
  
 on:
   workflow_dispatch:
@@ -144,14 +144,6 @@ jobs:
       run: |
         cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
         
-        if [ "${{ github.event.inputs.USE_CCACHE }}" = "true" ]; then
-          export CCACHE_DIR=~/.ccache
-          export USE_CCACHE=1
-          export CCACHE_EXEC=/usr/bin/ccache
-          ccache -M 50G
-          ccache -o compression=true
-        fi
-        
         set +e
         source build/envsetup.sh
         export ALLOW_MISSING_DEPENDENCIES=true
@@ -163,10 +155,6 @@ jobs:
         fi
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
       
-    - name: Display ccache statistics
-      if: github.event.inputs.USE_CCACHE == 'true'
-      run: |
-        ccache -sv
 
     - name: Rename outputs with Date
       run: |
