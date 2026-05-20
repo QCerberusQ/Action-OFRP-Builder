@@ -135,16 +135,6 @@ jobs:
         git clone ${{ github.event.inputs.COMMON_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.COMMON_PATH }}
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
-    - name: Setup ccache
-      if: github.event.inputs.USE_CCACHE == 'true'
-      uses: actions/cache@v4
-      with:
-        path: ~/.ccache
-        key: ${{ runner.os }}-ccache-${{ github.event.inputs.DEVICE_NAME }}-${{ github.event.inputs.MANIFEST_BRANCH }}-${{ github.run_id }}
-        restore-keys: |
-          ${{ runner.os }}-ccache-${{ github.event.inputs.DEVICE_NAME }}-${{ github.event.inputs.MANIFEST_BRANCH }}-
-          ${{ runner.os }}-ccache-${{ github.event.inputs.DEVICE_NAME }}-
-
     - name: Set Swap Space
       uses: pierotofy/set-swap-space@master
       with:
