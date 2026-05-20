@@ -100,6 +100,19 @@ jobs:
         git pull origin master
         ./orangefox_sync.sh --branch ${{ github.event.inputs.MANIFEST_BRANCH }} --path ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+
+    - name: Verify and fix sync
+      run: |
+        cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
+        
+        # Quick check for known problematic repos
+        if [ ! -d "external/gflags" ] || [ -z "$(ls -A external/gflags 2>/dev/null)" ]; then
+            echo "⚠️ Borked sync detected, running full re-sync..."
+            repo sync --force-sync --no-tags -j$(nproc --all)
+        else
+            echo "✅ Sync looks clean"
+        fi
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
  
     - name: Clone device tree
       run: |
