@@ -1,4 +1,4 @@
-name: Spacewar Cache Boot
+name: Spacewar OrangeFox Boot
  
 on:
   workflow_dispatch:
@@ -41,14 +41,6 @@ on:
         description: 'BUILD_TARGET'
         required: true
         default: 'boot'
-      USE_CCACHE:
-        description: 'Use ccache to speed up builds'
-        required: true
-        default: 'true'
-        type: choice
-        options:
-          - 'true'
-          - 'false'
  
 jobs:
   build:
@@ -77,7 +69,7 @@ jobs:
         DEBIAN_FRONTEND=noninteractive sudo apt install -yq \
             linux-modules-extra-$(uname -r) \
             git python3 python-is-python3 tar aria2 \
-            cpio lz4 lzop liblz4-tool squashfs-tools libtinfo6 ccache
+            cpio lz4 lzop liblz4-tool squashfs-tools libtinfo6
         git clone https://gitlab.com/OrangeFox/misc/scripts
         cd scripts
         sudo bash setup/android_build_env.sh
@@ -135,16 +127,6 @@ jobs:
         git clone ${{ github.event.inputs.COMMON_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.COMMON_PATH }}
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
-    - name: Setup ccache
-      if: github.event.inputs.USE_CCACHE == 'true'
-      uses: actions/cache@v4
-      with:
-        path: ~/.ccache
-        key: ${{ runner.os }}-ccache-${{ github.event.inputs.DEVICE_NAME }}-${{ github.event.inputs.MANIFEST_BRANCH }}-${{ github.run_id }}
-        restore-keys: |
-          ${{ runner.os }}-ccache-${{ github.event.inputs.DEVICE_NAME }}-${{ github.event.inputs.MANIFEST_BRANCH }}-
-          ${{ runner.os }}-ccache-${{ github.event.inputs.DEVICE_NAME }}-
-
     - name: Set Swap Space
       uses: pierotofy/set-swap-space@master
       with:
@@ -152,15 +134,7 @@ jobs:
  
     - name: Building recovery
       run: |
-        cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
-        
-        if [ "${{ github.event.inputs.USE_CCACHE }}" = "true" ]; then
-          export CCACHE_DIR=~/.ccache
-          export USE_CCACHE=1
-          export CCACHE_EXEC=/usr/bin/ccache
-          ccache -M 50G
-          ccache -o compression=true
-        fi
+        cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}      
         
         set +e
         source build/envsetup.sh
@@ -173,10 +147,6 @@ jobs:
         fi
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
       
-    - name: Display ccache statistics
-      if: github.event.inputs.USE_CCACHE == 'true'
-      run: |
-        ccache -sv
 
     - name: Rename outputs with Date
       run: |
@@ -210,6 +180,5 @@ jobs:
           - **Manifest:** ${{ github.event.inputs.MANIFEST_BRANCH }}
           - **Device:** ${{ github.event.inputs.DEVICE_NAME }}
           - **Target:** ${{ github.event.inputs.BUILD_TARGET }}
-          - **Note:** Built with ccache optimization
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
