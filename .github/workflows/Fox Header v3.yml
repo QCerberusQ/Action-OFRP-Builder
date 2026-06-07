@@ -1,5 +1,6 @@
 name: Spacewar OrangeFox Boot
- 
+
+
 on:
   workflow_dispatch:
     inputs:
@@ -26,9 +27,11 @@ on:
       COMMON_TREE_URL:
         description: 'COMMON_TREE_URL (if no common tree, leave blank)'
         required: false
+        default: ''
       COMMON_PATH:
         description: 'COMMON_PATH (if no common tree, leave blank)'
         required: false
+        default: ''
       DEVICE_NAME:
         description: 'DEVICE_NAME'
         required: true
@@ -41,7 +44,7 @@ on:
         description: 'BUILD_TARGET'
         required: true
         default: 'boot'
- 
+
 jobs:
   build:
     if: github.event.repository.owner.id == github.event.sender.id
@@ -84,9 +87,10 @@ jobs:
         java-version: '11'
  
     - name: Setup SSH Keys
-      if: ${{ startsWith(github.event.inputs.SYNC_URL, 'git@github.com') ||
-          startsWith(github.event.inputs.DEVICE_TREE_URL, 'git@github.com') ||
-          startsWith(github.event.inputs.COMMON_TREE_URL, 'git@github.com') }}
+      if: |
+        startsWith(github.event.inputs.SYNC_URL, 'git@github.com') ||
+        startsWith(github.event.inputs.DEVICE_TREE_URL, 'git@github.com') ||
+        startsWith(github.event.inputs.COMMON_TREE_URL, 'git@github.com')
       uses: webfactory/ssh-agent@v0.9.0
       with:
           ssh-private-key: |
@@ -109,8 +113,8 @@ jobs:
  
     - name: Clone common tree
       if: |
-        github.event.inputs.COMMON_TREE_URL != null
-        && github.event.inputs.COMMON_PATH != null
+        github.event.inputs.COMMON_TREE_URL != '' &&
+        github.event.inputs.COMMON_PATH != ''
       run: |
         cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
         git clone ${{ github.event.inputs.COMMON_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.COMMON_PATH }}
