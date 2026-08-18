@@ -81,10 +81,10 @@ jobs:
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Install OpenJDK
-      uses: actions/setup-java@v4
+      uses: actions/setup-java@v5
       with:
         distribution: 'zulu'
-        java-version: '11'
+        java-version: '17'
  
     - name: Setup SSH Keys
       if: |
@@ -118,6 +118,34 @@ jobs:
       run: |
         cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
         git clone ${{ github.event.inputs.COMMON_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.COMMON_PATH }}
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+
+    - name: Apply Bounded Wait Patch to Vold
+      run: |
+        cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
+        
+        # Weaver1.cpp icindeki sonsuz bekleme dongusunu (timeout) guvenli hale getir
+        VOLD_FILE="system/vold/Weaver1.cpp"
+        if [ -f "$VOLD_FILE" ]; then
+          echo "Applying bounded wait patch to $VOLD_FILE"
+          python3 -c "
+          path = '$VOLD_FILE'
+          with open(path, 'r') as f:
+              content = f.read()
+          
+          old_code = '''const std::string instance = std::string(::aidl::android::hardware::weaver::IWeaver::descriptor) + \"/default\";\n    AIBinder* binder = AServiceManager_waitForService(instance.c_str());'''
+          
+          new_code = '''const std::string instance = std::string(::aidl::android::hardware::weaver::IWeaver::descriptor) + \"/default\";\n    AIBinder* binder = nullptr;\n    for (int i = 0; i < 25 && binder == nullptr; ++i) {\n        binder = AServiceManager_checkService(instance.c_str());\n        if (binder == nullptr) usleep(200000);\n    }'''
+          
+          if old_code in content:
+              content = content.replace(old_code, new_code)
+              with open(path, 'w') as f:
+                  f.write(content)
+              print('Successfully patched Weaver1.cpp')
+          else:
+              print('Warning: Target pattern not found in Weaver1.cpp')
+          "
+        fi
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Set Swap Space
