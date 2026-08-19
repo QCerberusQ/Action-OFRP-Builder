@@ -98,7 +98,7 @@ jobs:
     - name: Setup Ccache
       uses: actions/cache@v4
       with:
-        path: ${{ steps.pwd.outputs.workspace-folder }}/.ccache
+        path: /home/runner/.ccache
         key: ccache-${{ github.event.inputs.DEVICE_NAME }}-${{ github.event.inputs.MANIFEST_BRANCH }}-${{ github.sha }}
         restore-keys: |
           ccache-${{ github.event.inputs.DEVICE_NAME }}-${{ github.event.inputs.MANIFEST_BRANCH }}-
@@ -139,7 +139,7 @@ jobs:
         # Ccache Settings
         export USE_CCACHE=1
         export CCACHE_EXEC=/usr/bin/ccache
-        export CCACHE_DIR=${{ steps.pwd.outputs.workspace-folder }}/.ccache
+        export CCACHE_DIR=/home/runner/.ccache
         ccache -M 20G
         
         set +e
@@ -187,3 +187,4 @@ jobs:
           - **Target:** ${{ github.event.inputs.BUILD_TARGET }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
