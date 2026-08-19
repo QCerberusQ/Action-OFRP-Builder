@@ -1,6 +1,5 @@
 name: Spacewar OrangeFox VendorBoot
 
-
 on:
   workflow_dispatch:
     inputs:
@@ -52,20 +51,20 @@ jobs:
     permissions:
       contents: write
     steps:
- 
+    
     - name: Check Out
       uses: actions/checkout@v4
- 
+
     - name: Cleanup
       uses: rokibhasansagar/slimhub_actions@main
- 
+
     - name: Initialize workspace
+      id: pwd
       run: |
         mkdir workspace
         cd workspace
         echo "workspace-folder=$(pwd)" >> $GITHUB_OUTPUT
-      id: pwd
- 
+        
     - name: Prepare the build environment
       run: |
         sudo apt update && sudo apt upgrade -y
@@ -85,7 +84,7 @@ jobs:
       with:
         distribution: 'zulu'
         java-version: '11'
- 
+
     - name: Setup SSH Keys
       if: |
         startsWith(github.event.inputs.SYNC_URL, 'git@github.com') ||
@@ -95,7 +94,7 @@ jobs:
       with:
           ssh-private-key: |
             ${{ secrets.SSH_PRIVATE_KEY }}
- 
+
     - name: Sync OrangeFox sources and minimal manifest
       run: |
         cd ${{ steps.pwd.outputs.workspace-folder }}
@@ -104,13 +103,13 @@ jobs:
         git pull origin master
         ./orangefox_sync.sh --branch ${{ github.event.inputs.MANIFEST_BRANCH }} --path ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
- 
+
     - name: Clone device tree
       run: |
         cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
         git clone ${{ github.event.inputs.DEVICE_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.DEVICE_PATH }}
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
- 
+
     - name: Clone common tree
       if: |
         github.event.inputs.COMMON_TREE_URL != '' &&
@@ -124,7 +123,7 @@ jobs:
       uses: pierotofy/set-swap-space@master
       with:
         swap-size-gb: 24
- 
+
     - name: Building recovery
       run: |
         cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}      
@@ -140,7 +139,6 @@ jobs:
         fi
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
       
-
     - name: Rename outputs with Date
       run: |
         BUILD_DATE=$(TZ=Asia/Istanbul date +%Y%m%d)
@@ -152,13 +150,13 @@ jobs:
           name="${base%.*}"
           mv "$f" "$OUT_DIR/${name}-${BUILD_DATE}.${ext}"
         done
- 
+
     - name: Check the output directory before uploading
       run: |
         ls -al ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}/out/target/product/
         echo
         ls -al ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/
- 
+
     - name: Upload to Release
       uses: softprops/action-gh-release@v2
       with:
