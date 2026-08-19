@@ -71,7 +71,7 @@ jobs:
         DEBIAN_FRONTEND=noninteractive sudo apt install -yq \
             linux-modules-extra-$(uname -r) \
             git python3 python-is-python3 tar aria2 \
-            cpio lz4 lzop liblz4-tool squashfs-tools libtinfo6
+            cpio lz4 lzop liblz4-tool squashfs-tools libtinfo6 ccache
         git clone https://gitlab.com/OrangeFox/misc/scripts
         cd scripts
         sudo bash setup/android_build_env.sh
@@ -94,6 +94,14 @@ jobs:
       with:
           ssh-private-key: |
             ${{ secrets.SSH_PRIVATE_KEY }}
+
+    - name: Setup Ccache
+      uses: actions/cache@v4
+      with:
+        path: ${{ steps.pwd.outputs.workspace-folder }}/.ccache
+        key: ccache-${{ github.event.inputs.DEVICE_NAME }}-${{ github.event.inputs.MANIFEST_BRANCH }}-${{ github.sha }}
+        restore-keys: |
+          ccache-${{ github.event.inputs.DEVICE_NAME }}-${{ github.event.inputs.MANIFEST_BRANCH }}-
 
     - name: Sync OrangeFox sources and minimal manifest
       run: |
@@ -127,6 +135,12 @@ jobs:
     - name: Building recovery
       run: |
         cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}      
+        
+        # Ccache Settings
+        export USE_CCACHE=1
+        export CCACHE_EXEC=/usr/bin/ccache
+        export CCACHE_DIR=${{ steps.pwd.outputs.workspace-folder }}/.ccache
+        ccache -M 20G
         
         set +e
         source build/envsetup.sh
