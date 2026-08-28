@@ -1,4 +1,4 @@
-name: Spacewar OrangeFox VendorBoot
+name: Rothko OrangeFox VendorBoot
 
 on:
   workflow_dispatch:
