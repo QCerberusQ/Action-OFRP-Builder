@@ -124,6 +124,60 @@ jobs:
       with:
         swap-size-gb: 24
 
+    - name: Patch vold Weaver AIDL wait (bounded 5s)
+      run: |
+        set -euo pipefail
+        SRC="${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}"
+        echo "== Weaver AIDL wait call sites in the synced workspace =="
+        grep -rn --include=*.cpp --include=*.h \
+             -e AServiceManager_waitForService \
+             -e 'weaver::IWeaver::descriptor' \
+             "$SRC/system/vold" "$SRC/bootable/recovery" || true
+
+        F="$SRC/system/vold/Weaver1.cpp"
+        test -f "$F" || { echo "FATAL: $F not found"; exit 1; }
+        cp "$F" "$F.orig"
+
+        python3 - "$F" <<'PY'
+        import io, sys
+        p = sys.argv[1]
+        s = io.open(p, encoding='utf-8').read()
+        done = []
+
+        old = '    AIBinder* binder = AServiceManager_waitForService(instance.c_str());'
+        new = ('#pragma clang diagnostic push\n'
+               '#pragma clang diagnostic ignored "-Wdeprecated-declarations"\n'
+               '    // OFRP: AServiceManager_getService polls for 5s then returns nullptr,\n'
+               '    // instead of waiting forever like AServiceManager_waitForService.\n'
+               '    AIBinder* binder = AServiceManager_getService(instance.c_str());\n'
+               '#pragma clang diagnostic pop')
+        if old in s:
+            s = s.replace(old, new, 1); done.append('1-bounded-aidl-wait')
+        else:
+            print('FATAL: anchor 1 not found; see grep output above'); sys.exit(1)
+
+        old2 = 'mDevice = ::android::hardware::weaver::V1_0::IWeaver::getService();'
+        if old2 in s:
+            s = s.replace(old2, 'mDevice = ::android::hardware::weaver::V1_0::IWeaver::tryGetService();', 1)
+            done.append('2-hidl-nonblocking')
+        else:
+            print('NOTE: no HIDL fallback in this vold; nothing to bound.')
+
+        old3 = '\tWeaverStatus status;\n\tWeaverConfig cfg;'
+        if 'mDevice->getConfig' in s and old3 in s:
+            s = s.replace(old3, '\tif (mDevice == nullptr)\n\t\treturn false;\n\n' + old3, 1)
+            done.append('3-null-guard')
+        else:
+            print('NOTE: GetConfig anchor differs; skipped null guard.')
+
+        io.open(p, 'w', encoding='utf-8', newline='\n').write(s)
+        print('applied: ' + ', '.join(done))
+        PY
+
+        echo "== resulting diff =="
+        diff -u "$F.orig" "$F" || true
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+
     - name: Building recovery
       run: |
         cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}      
