@@ -266,12 +266,12 @@ jobs:
           sed -i "s/^ro.vendor.build.security_patch=.*/ro.vendor.build.security_patch=$SPL/" "$f"
         done
         
-        echo "== 5. recompress at lz4 -l -12 (max) =="
+        echo "== 5. recompress: gzip -9 fragment (lz4 max was 476KB over) =="
         "$HOST/mkbootfs" -d "$POUT/system" rec > rec.cpio
-        cp "$PLAT_CPIO" plat.cpio                       # original platform blob, unchanged
-        "$HOST/lz4" -l -12 -f rec.cpio  rec.cpio.lz4
+        cp "$PLAT_CPIO" plat.cpio                       # platform blob stays lz4 (stock-like)
+        gzip -9 -n -c rec.cpio > rec.cpio.gz            # -n = deterministic output
         "$HOST/lz4" -l -12 -f plat.cpio plat.cpio.lz4
-        echo "combined: $(( $(stat -c%s plat.cpio.lz4) + $(stat -c%s rec.cpio.lz4) ))"
+        echo "combined: $(( $(stat -c%s plat.cpio.lz4) + $(stat -c%s rec.cpio.gz) ))"
         
         echo "== 6. assemble + AVB footer =="
         "$HOST/mkbootimg" \
@@ -283,11 +283,15 @@ jobs:
           --tags_offset 0x07c88000 --dtb_offset 0x07c88000 \
           --vendor_ramdisk plat.cpio.lz4 \
           --ramdisk_type RECOVERY --ramdisk_name recovery \
-          --vendor_ramdisk_fragment rec.cpio.lz4 \
+          --vendor_ramdisk_fragment rec.cpio.gz \
           --vendor_boot vendor_boot_rothko.img
           
         "$HOST/avbtool" add_hash_footer --image vendor_boot_rothko.img \
           --partition_size 67108864 --partition_name vendor_boot
+          
+        echo "== 6.5. sanity check before flashing =="
+        "$HOST/unpack_bootimg" --boot_img vendor_boot_rothko.img --out hdr | tee unpack_info.txt
+        grep -i "compression" unpack_info.txt || echo "NOTE: no compression line found - check unpack_info.txt"
           
         echo "== 7. purge non-flashable outputs, ship only the repacked image =="
         rm -f "$POUT"/*.img "$POUT"/*.zip
