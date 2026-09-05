@@ -238,7 +238,11 @@ jobs:
         echo "== 1. unpack stock (NO -n: full decompression) =="
         cp "$STOCK" stock.img
         "$MAGISKBOOT" unpack stock.img
-        ls -la ramdisk.cpio dtb vendor_ramdisk* 2>/dev/null || true
+        ls -la dtb vendor_ramdisk* 2>/dev/null || true
+        
+        PLAT_CPIO="ramdisk.cpio"
+        [ ! -f "$PLAT_CPIO" ] && PLAT_CPIO="vendor_ramdisk/ramdisk.cpio"
+        test -f "$PLAT_CPIO" || { echo "FATAL: Platform ramdisk ($PLAT_CPIO) bulunamadi"; exit 1; }
         
         echo "== 2. recovery fragment: decompress + extract =="
         "$HOST/lz4" -d -f "$REC_SRC" fox.cpio
@@ -252,7 +256,7 @@ jobs:
         
         echo "== 4. SPL match (guarded) =="
         mkdir plat
-        ( cd plat && cpio -idm --quiet --no-absolute-filenames prop.default < ../ramdisk.cpio )
+        ( cd plat && cpio -idm --quiet --no-absolute-filenames prop.default < "../$PLAT_CPIO" )
         SPL=$(grep '^ro.build.version.security_patch=' plat/prop.default | cut -d= -f2)
         echo "Stock SPL: $SPL"
         [ -n "$SPL" ] || { echo "FATAL: cannot read stock SPL"; exit 1; }
@@ -264,7 +268,7 @@ jobs:
         
         echo "== 5. recompress at lz4 -l -12 (max) =="
         "$HOST/mkbootfs" -d "$POUT/system" rec > rec.cpio
-        cp ramdisk.cpio plat.cpio                       # original platform blob, unchanged
+        cp "$PLAT_CPIO" plat.cpio                       # original platform blob, unchanged
         "$HOST/lz4" -l -12 -f rec.cpio  rec.cpio.lz4
         "$HOST/lz4" -l -12 -f plat.cpio plat.cpio.lz4
         echo "combined: $(( $(stat -c%s plat.cpio.lz4) + $(stat -c%s rec.cpio.lz4) ))"
