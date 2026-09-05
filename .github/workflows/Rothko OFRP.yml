@@ -220,6 +220,76 @@ jobs:
           lunch ${{ github.event.inputs.MAKEFILE_NAME }}-eng && make clean && mka adbd ${{ github.event.inputs.BUILD_TARGET }}image -j$(nproc --all)
         fi
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+
+    - name: Repack Vendor Boot for Rothko
+      run: |
+        set -euo pipefail
+        FOX="${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}"
+        OUT="$FOX/out"; HOST="$OUT/host/linux-x86/bin"
+        POUT="$OUT/target/product/${{ github.event.inputs.DEVICE_NAME }}"
+        MAGISKBOOT="$FOX/vendor/recovery/tools/magiskboot"
+        DEV="$FOX/device/xiaomi/${{ github.event.inputs.DEVICE_NAME }}"
+        REC_SRC="$POUT/obj/PACKAGING/vendor_ramdisk_fragments_intermediates/recovery.cpio.lz4"
+        STOCK="$DEV/prebuilt/stock_vendor_boot.img"
+        WORK=$(mktemp -d); cd "$WORK"; trap 'cd /; rm -rf "$WORK"' EXIT
+        
+        test -f "$REC_SRC" || { echo "FATAL: fragment $REC_SRC missing"; exit 1; }
+        
+        echo "== 1. unpack stock (NO -n: full decompression) =="
+        cp "$STOCK" stock.img
+        "$MAGISKBOOT" unpack stock.img
+        ls -la ramdisk.cpio dtb vendor_ramdisk* 2>/dev/null || true
+        
+        echo "== 2. recovery fragment: decompress + extract =="
+        "$HOST/lz4" -d -f "$REC_SRC" fox.cpio
+        rm -rf rec && mkdir rec
+        ( cd rec && cpio -idm --quiet --no-absolute-filenames < ../fox.cpio )
+        
+        echo "== 3. trim =="
+        rm -f  rec/twres/fonts/DroidSansFallback.ttf
+        rm -rf rec/system/etc/terminfo
+        rm -f  rec/sbin/bash rec/sbin/magiskboot
+        
+        echo "== 4. SPL match (guarded) =="
+        mkdir plat
+        ( cd plat && cpio -idm --quiet --no-absolute-filenames prop.default < ../ramdisk.cpio )
+        SPL=$(grep '^ro.build.version.security_patch=' plat/prop.default | cut -d= -f2)
+        echo "Stock SPL: $SPL"
+        [ -n "$SPL" ] || { echo "FATAL: cannot read stock SPL"; exit 1; }
+        for f in rec/prop.default rec/default.prop; do
+          [ -f "$f" ] || continue
+          sed -i "s/^ro.build.version.security_patch=.*/ro.build.version.security_patch=$SPL/" "$f"
+          sed -i "s/^ro.vendor.build.security_patch=.*/ro.vendor.build.security_patch=$SPL/" "$f"
+        done
+        
+        echo "== 5. recompress at lz4 -l -12 (max) =="
+        "$HOST/mkbootfs" -d "$POUT/system" rec > rec.cpio
+        cp ramdisk.cpio plat.cpio                       # original platform blob, unchanged
+        "$HOST/lz4" -l -12 -f rec.cpio  rec.cpio.lz4
+        "$HOST/lz4" -l -12 -f plat.cpio plat.cpio.lz4
+        echo "combined: $(( $(stat -c%s plat.cpio.lz4) + $(stat -c%s rec.cpio.lz4) ))"
+        
+        echo "== 6. assemble + AVB footer =="
+        "$HOST/mkbootimg" \
+          --dtb dtb \
+          --base 0x3fff8000 --pagesize 4096 --header_version 4 \
+          --os_version 14 --os_patch_level "$SPL" \
+          --vendor_cmdline "bootopt=64S3,32N2,64N2" \
+          --kernel_offset 0x00008000 --ramdisk_offset 0x26f08000 \
+          --tags_offset 0x07c88000 --dtb_offset 0x07c88000 \
+          --vendor_ramdisk plat.cpio.lz4 \
+          --ramdisk_type RECOVERY --ramdisk_name recovery \
+          --vendor_ramdisk_fragment rec.cpio.lz4 \
+          --vendor_boot vendor_boot_rothko.img
+          
+        "$HOST/avbtool" add_hash_footer --image vendor_boot_rothko.img \
+          --partition_size 67108864 --partition_name vendor_boot
+          
+        echo "== 7. purge non-flashable outputs, ship only the repacked image =="
+        rm -f "$POUT"/*.img "$POUT"/*.zip
+        cp vendor_boot_rothko.img "$POUT/OrangeFox-Rothko-Repacked.img"
+        ls -lh "$POUT/"
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
       
     - name: Rename outputs with Date
       run: |
