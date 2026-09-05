@@ -178,6 +178,34 @@ jobs:
         diff -u "$F.orig" "$F" || true
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
+    - name: Patch SE and OMAPI AIDL Interfaces
+      run: |
+        set -euo pipefail
+        SRC="${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}"
+
+        # 1. OMAPI AIDL Yaması
+        OMAPI_BP="$SRC/frameworks/base/omapi/aidl/Android.bp"
+        if [ -f "$OMAPI_BP" ]; then
+          if ! grep -q "recovery_available: true" "$OMAPI_BP"; then
+            sed -i '/name: "android.se.omapi",/a \    recovery_available: true,' "$OMAPI_BP"
+            echo "OMAPI AIDL basariyla yamalandi."
+          fi
+        else
+          echo "UYARI: $OMAPI_BP bulunamadi!"
+        fi
+
+        # 2. Secure Element AIDL Yaması
+        SE_BP="$SRC/hardware/interfaces/secure_element/aidl/Android.bp"
+        if [ -f "$SE_BP" ]; then
+          if ! grep -q "recovery_available: true" "$SE_BP"; then
+            sed -i '/name: "android.hardware.secure_element",/a \    recovery_available: true,' "$SE_BP"
+            echo "Secure Element AIDL basariyla yamalandi."
+          fi
+        else
+          echo "UYARI: $SE_BP bulunamadi!"
+        fi
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+
     - name: Building recovery
       run: |
         cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}      
