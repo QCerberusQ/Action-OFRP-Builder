@@ -275,8 +275,9 @@ jobs:
         rm -rf plat && mkdir plat
         ( cd plat && cpio -idm --quiet --no-absolute-filenames \
             prop.default default.prop < "../$PLAT_CPIO" ) || true
+        # -m1 is per-file, so head -n1 is required when both files carry the line
         SPL=$(grep -hm1 '^ro.build.version.security_patch=' \
-                plat/prop.default plat/default.prop 2>/dev/null | cut -d= -f2 || true)
+                plat/prop.default plat/default.prop 2>/dev/null | cut -d= -f2 | head -n1 || true)
         echo "Stock SPL: $SPL"
         [ -n "$SPL" ] || { echo "FATAL: cannot read stock SPL from platform ramdisk"; ls -la plat; exit 1; }
         for f in rec/prop.default rec/default.prop; do
@@ -331,7 +332,9 @@ jobs:
         done
 
         echo "== 7. ship only the repacked image =="
-        find "$POUT" -maxdepth 1 -name '*.img' -delete
+        # the zip must go too: OFRP's update zip embeds the fragment-only,
+        # unbootable image, and the rename/upload globs would ship it
+        find "$POUT" -maxdepth 1 \( -name '*.img' -o -name '*.zip' \) -delete
         cp vendor_boot_rothko.img "$POUT/OrangeFox-Rothko-Repacked.img"
         ls -lh "$POUT/"
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
