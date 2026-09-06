@@ -1,4 +1,4 @@
-name: Rothko OrangeFox VendorBoot
+name: Rothko OrangeFox Without VendorBoot
 
 on:
   workflow_dispatch:
@@ -209,6 +209,11 @@ jobs:
     - name: Building recovery
       run: |
         cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
+        
+        echo "== Brute-force Dil Silme Islemi (Sadece Ingilizce birakiliyor) =="
+        if [ -d bootable/recovery/gui/theme/common/languages ]; then
+          find bootable/recovery/gui/theme/common/languages -type f ! -name 'en.xml' -print -delete || true
+        fi
 
         set +e
         source build/envsetup.sh
@@ -231,110 +236,11 @@ jobs:
         echo "Tum FBE dosyalari basariyla ramdisk'e eklendi!"
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
-    - name: Repack Vendor Boot for Rothko
-      run: |
-        set -euo pipefail
-        FOX="${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}"
-        OUT="$FOX/out"; HOST="$OUT/host/linux-x86/bin"
-        POUT="$OUT/target/product/${{ github.event.inputs.DEVICE_NAME }}"
-        MAGISKBOOT="$FOX/vendor/recovery/tools/magiskboot"
-        DEV="$FOX/device/xiaomi/${{ github.event.inputs.DEVICE_NAME }}"
-        REC_SRC="$POUT/obj/PACKAGING/vendor_ramdisk_fragments_intermediates/recovery.cpio.lz4"
-        STOCK="$DEV/prebuilt/stock_vendor_boot.img"
-        WORK=$(mktemp -d); cd "$WORK"; trap 'cd /; rm -rf "$WORK"' EXIT
-
-        test -f "$REC_SRC" || { echo "FATAL: fragment $REC_SRC missing"; exit 1; }
-
-        echo "== 1. unpack stock (NO -n: full decompression) =="
-        cp "$STOCK" stock.img
-        "$MAGISKBOOT" unpack stock.img
-        ls -la dtb vendor_ramdisk* 2>/dev/null || true
-        test -f dtb || { echo "FATAL: dtb not found after unpack"; ls -la; exit 1; }
-
-        PLAT_CPIO="ramdisk.cpio"
-        [ ! -f "$PLAT_CPIO" ] && PLAT_CPIO="vendor_ramdisk/ramdisk.cpio"
-        test -f "$PLAT_CPIO" || { echo "FATAL: platform ramdisk ($PLAT_CPIO) not found"; exit 1; }
-
-        echo "== 2. recovery fragment: decompress + extract =="
-        "$HOST/lz4" -d -f "$REC_SRC" fox.cpio
-        rm -rf rec && mkdir rec
-        ( cd rec && cpio -idm --quiet --no-absolute-filenames < ../fox.cpio )
-
-        echo "== 3. trim =="
-        rm -f  rec/twres/fonts/DroidSansFallback.ttf
-        rm -rf rec/system/etc/terminfo
-        rm -f  rec/sbin/bash rec/sbin/magiskboot
-
-        # keep only en.xml; TW_EXTRA_LANGUAGES=false should already have done this,
-        # so report what is actually removed to confirm the build flag works
-        if [ -d rec/twres/languages ]; then
-          find rec/twres/languages -type f ! -name 'en.xml' -print -delete || true
-        fi
-
-        echo "== 4. SPL match (guarded) =="
-        rm -rf plat && mkdir plat
-        ( cd plat && cpio -idm --quiet --no-absolute-filenames \
-            prop.default default.prop < "../$PLAT_CPIO" ) || true
-        # -m1 is per-file, so head -n1 is required when both files carry the line
-        SPL=$(grep -hm1 '^ro.build.version.security_patch=' \
-                plat/prop.default plat/default.prop 2>/dev/null | cut -d= -f2 | head -n1 || true)
-        echo "Stock SPL: $SPL"
-        [ -n "$SPL" ] || { echo "FATAL: cannot read stock SPL from platform ramdisk"; ls -la plat; exit 1; }
-        for f in rec/prop.default rec/default.prop; do
-          [ -f "$f" ] || continue
-          sed -i "s/^ro.build.version.security_patch=.*/ro.build.version.security_patch=$SPL/" "$f"
-          sed -i "s/^ro.vendor.build.security_patch=.*/ro.vendor.build.security_patch=$SPL/" "$f"
-        done
-        grep -H security_patch rec/prop.default rec/default.prop || true
-
-        echo "== 5. recompress: LZ4 preferred, gzip fallback =="
-        "$HOST/mkbootfs" -d "$POUT/system" rec > rec.cpio
-        cp "$PLAT_CPIO" plat.cpio
-        "$HOST/lz4" -l -12 -f plat.cpio plat.cpio.lz4
-        "$HOST/lz4" -l -12 -f rec.cpio  rec.cpio.lz4
-        FRAG="rec.cpio.lz4"
-
-        # avbtool usable size (64MiB - footer/vbmeta) minus platform, minus stock dtb,
-        # minus header page + table page + up to 3 alignment pages = 24 KiB slack
-        MAX_FRAG=$(( 67039232 - $(stat -c%s plat.cpio.lz4) - $(stat -c%s dtb) - 24576 ))
-        if [ "$(stat -c%s "$FRAG")" -gt "$MAX_FRAG" ]; then
-          echo "lz4 fragment over budget - falling back to gzip -9"
-          gzip -9 -n -c rec.cpio > rec.cpio.gz
-          FRAG="rec.cpio.gz"
-        fi
-        echo "fragment: $FRAG ($(stat -c%s "$FRAG") bytes, budget $MAX_FRAG)"
-        [ "$(stat -c%s "$FRAG")" -le "$MAX_FRAG" ] || {
-          echo "FATAL: even gzip -9 exceeds the budget by $(( $(stat -c%s "$FRAG") - MAX_FRAG )) bytes"; exit 1; }
-
-        echo "== 6. assemble + AVB footer =="
-        "$HOST/mkbootimg" \
-          --dtb dtb \
-          --base 0x3fff8000 --pagesize 4096 --header_version 4 \
-          --os_version 14 --os_patch_level "$SPL" \
-          --vendor_cmdline "bootopt=64S3,32N2,64N2 androidboot.selinux=permissive" \
-          --kernel_offset 0x00008000 --ramdisk_offset 0x26f08000 \
-          --tags_offset 0x07c88000 --dtb_offset 0x07c88000 \
-          --vendor_ramdisk plat.cpio.lz4 \
-          --ramdisk_type RECOVERY --ramdisk_name recovery \
-          --vendor_ramdisk_fragment "$FRAG" \
-          --vendor_boot vendor_boot_rothko.img
-
-        "$HOST/avbtool" add_hash_footer --image vendor_boot_rothko.img \
-          --partition_size 67108864 --partition_name vendor_boot
-
-        echo "== 7. ship only the repacked image =="
-        # the zip must go too: OFRP's update zip embeds the fragment-only,
-        # unbootable image, and the rename/upload globs would ship it
-        find "$POUT" -maxdepth 1 \( -name '*.img' -o -name '*.zip' \) -delete
-        cp vendor_boot_rothko.img "$POUT/OrangeFox-Rothko-Repacked.img"
-        ls -lh "$POUT/"
-      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
-
     - name: Rename outputs with Date
       run: |
         BUILD_DATE=$(TZ=Asia/Istanbul date +%Y%m%d)
         OUT_DIR=${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}/out/target/product/${{ github.event.inputs.DEVICE_NAME }}
-        for f in "$OUT_DIR"/OrangeFox*.img "$OUT_DIR"/OrangeFox*.zip; do
+        for f in "$OUT_DIR"/*.img "$OUT_DIR"/*.zip; do
           [ -e "$f" ] || continue
           base=$(basename "$f")
           ext="${base##*.}"
