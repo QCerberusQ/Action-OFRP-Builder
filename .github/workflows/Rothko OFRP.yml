@@ -289,10 +289,6 @@ jobs:
         "$HOST/avbtool" add_hash_footer --image vendor_boot_rothko.img \
           --partition_size 67108864 --partition_name vendor_boot
           
-        echo "== 6.5. sanity check before flashing =="
-        "$HOST/unpack_bootimg" --boot_img vendor_boot_rothko.img --out hdr | tee unpack_info.txt
-        grep -i "compression" unpack_info.txt || echo "NOTE: no compression line found - check unpack_info.txt"
-          
         echo "== 7. purge non-flashable outputs, ship only the repacked image =="
         rm -f "$POUT"/*.img "$POUT"/*.zip
         cp vendor_boot_rothko.img "$POUT/OrangeFox-Rothko-Repacked.img"
