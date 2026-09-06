@@ -239,6 +239,7 @@ jobs:
         cp "$STOCK" stock.img
         "$MAGISKBOOT" unpack stock.img
         ls -la dtb vendor_ramdisk* 2>/dev/null || true
+        test -f dtb || { echo "FATAL: dtb not found after unpack"; ls -la; exit 1; }
         
         PLAT_CPIO="ramdisk.cpio"
         [ ! -f "$PLAT_CPIO" ] && PLAT_CPIO="vendor_ramdisk/ramdisk.cpio"
@@ -254,6 +255,9 @@ jobs:
         rm -rf rec/system/etc/terminfo
         rm -f  rec/sbin/bash rec/sbin/magiskboot
         
+        # DIL DOSYALARI KATLIAMI: Sadece en.xml (Ingilizce) kalsin, gerisini sil
+        find rec/twres/languages -type f ! -name "en.xml" -delete 2>/dev/null || true
+        
         echo "== 4. SPL match (guarded) =="
         mkdir plat
         ( cd plat && cpio -idm --quiet --no-absolute-filenames prop.default < "../$PLAT_CPIO" )
@@ -265,13 +269,16 @@ jobs:
           sed -i "s/^ro.build.version.security_patch=.*/ro.build.version.security_patch=$SPL/" "$f"
           sed -i "s/^ro.vendor.build.security_patch=.*/ro.vendor.build.security_patch=$SPL/" "$f"
         done
+        grep -H security_patch rec/prop.default rec/default.prop || true
         
-        echo "== 5. recompress: gzip -9 fragment (lz4 max was 476KB over) =="
+        echo "== 5. recompress: LZ4 ONLY (Languages trimmed) =="
         "$HOST/mkbootfs" -d "$POUT/system" rec > rec.cpio
-        cp "$PLAT_CPIO" plat.cpio                       # platform blob stays lz4 (stock-like)
-        gzip -9 -n -c rec.cpio > rec.cpio.gz            # -n = deterministic output
+        cp "$PLAT_CPIO" plat.cpio
+        
+        # GZIP Iptal! Her iki parca da orijinal LZ4 formatiyla sikistiriliyor
+        "$HOST/lz4" -l -12 -f rec.cpio rec.cpio.lz4
         "$HOST/lz4" -l -12 -f plat.cpio plat.cpio.lz4
-        echo "combined: $(( $(stat -c%s plat.cpio.lz4) + $(stat -c%s rec.cpio.gz) ))"
+        echo "combined: $(( $(stat -c%s plat.cpio.lz4) + $(stat -c%s rec.cpio.lz4) ))"
         
         echo "== 6. assemble + AVB footer =="
         "$HOST/mkbootimg" \
@@ -283,7 +290,7 @@ jobs:
           --tags_offset 0x07c88000 --dtb_offset 0x07c88000 \
           --vendor_ramdisk plat.cpio.lz4 \
           --ramdisk_type RECOVERY --ramdisk_name recovery \
-          --vendor_ramdisk_fragment rec.cpio.gz \
+          --vendor_ramdisk_fragment rec.cpio.lz4 \
           --vendor_boot vendor_boot_rothko.img
           
         "$HOST/avbtool" add_hash_footer --image vendor_boot_rothko.img \
