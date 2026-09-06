@@ -182,28 +182,28 @@ jobs:
       run: |
         set -euo pipefail
         SRC="${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}"
-
-        # 1. OMAPI AIDL Yaması
-        OMAPI_BP="$SRC/frameworks/base/omapi/aidl/Android.bp"
-        if [ -f "$OMAPI_BP" ]; then
-          if ! grep -q "recovery_available: true" "$OMAPI_BP"; then
-            sed -i '/name: "android.se.omapi",/a \    recovery_available: true,' "$OMAPI_BP"
-            echo "OMAPI AIDL basariyla yamalandi."
+        fail=0
+        for entry in \
+          "frameworks/base|omapi/aidl/Android.bp|android.se.omapi" \
+          "hardware/interfaces|secure_element/aidl/Android.bp|android.hardware.secure_element"; do
+          IFS='|' read -r repo relpath iface <<< "$entry"
+          file="$SRC/$repo/$relpath"
+          if [ ! -f "$file" ]; then
+            echo "FATAL: $file not found - manifest layout changed?"; fail=1; continue
           fi
-        else
-          echo "UYARI: $OMAPI_BP bulunamadi!"
-        fi
-
-        # 2. Secure Element AIDL Yaması
-        SE_BP="$SRC/hardware/interfaces/secure_element/aidl/Android.bp"
-        if [ -f "$SE_BP" ]; then
-          if ! grep -q "recovery_available: true" "$SE_BP"; then
-            sed -i '/name: "android.hardware.secure_element",/a \    recovery_available: true,' "$SE_BP"
-            echo "Secure Element AIDL basariyla yamalandi."
+          line=$(grep -n "name: \"$iface\"," "$file" | head -1 | cut -d: -f1 || true)
+          if [ -z "$line" ]; then
+            echo "FATAL: interface $iface not found in $file"; fail=1; continue
           fi
-        else
-          echo "UYARI: $SE_BP bulunamadi!"
-        fi
+          if sed -n "${line},$((line+8))p" "$file" | grep -q "recovery_available: true"; then
+            echo "SKIP     $repo/$relpath (already patched)"
+          else
+            sed -i "${line}a\\    recovery_available: true," "$file"
+            echo "PATCHED  $repo/$relpath"
+          fi
+          grep -A4 "name: \"$iface\"," "$file" | head -5
+        done
+        [ "$fail" -eq 0 ] || exit 1
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Building recovery
@@ -219,6 +219,16 @@ jobs:
         else
           lunch ${{ github.event.inputs.MAKEFILE_NAME }}-eng && make clean && mka adbd ${{ github.event.inputs.BUILD_TARGET }}image -j$(nproc --all)
         fi
+        
+        echo "== FBE Artifact Check =="
+        OUT="${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}/out"
+        for f in \
+          "$OUT/target/product/${{ github.event.inputs.DEVICE_NAME }}/recovery/root/system/bin/se_omapi" \
+          "$OUT/target/product/${{ github.event.inputs.DEVICE_NAME }}/recovery/root/system/lib64/android.se.omapi-V1-ndk.so" \
+          "$OUT/target/product/${{ github.event.inputs.DEVICE_NAME }}/recovery/root/system/lib64/android.hardware.secure_element-V1-ndk.so"; do
+          [ -f "$f" ] || { echo "FATAL: $f missing from recovery ramdisk"; exit 1; }
+        done
+        echo "Tum FBE dosyalari basariyla ramdisk'e eklendi!"
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Repack Vendor Boot for Rothko
@@ -271,14 +281,22 @@ jobs:
         done
         grep -H security_patch rec/prop.default rec/default.prop || true
         
-        echo "== 5. recompress: LZ4 ONLY (Languages trimmed) =="
+        echo "== 5. recompress: LZ4 preferred, gzip fallback =="
         "$HOST/mkbootfs" -d "$POUT/system" rec > rec.cpio
         cp "$PLAT_CPIO" plat.cpio
-        
-        # GZIP Iptal! Her iki parca da orijinal LZ4 formatiyla sikistiriliyor
-        "$HOST/lz4" -l -12 -f rec.cpio rec.cpio.lz4
         "$HOST/lz4" -l -12 -f plat.cpio plat.cpio.lz4
-        echo "combined: $(( $(stat -c%s plat.cpio.lz4) + $(stat -c%s rec.cpio.lz4) ))"
+        "$HOST/lz4" -l -12 -f rec.cpio rec.cpio.lz4
+        FRAG="rec.cpio.lz4"
+        
+        # budget: avbtool max 67,039,232 minus platform minus dtb(444,463)
+        # minus header/alignment slack (~16 KB) = max allowed fragment size
+        MAX_FRAG=$(( 67039232 - $(stat -c%s plat.cpio.lz4) - $(stat -c%s dtb) - 16384 ))
+        if [ "$(stat -c%s "$FRAG")" -gt "$MAX_FRAG" ]; then
+          echo "lz4 fragment too big - falling back to gzip -9"
+          gzip -9 -n -c rec.cpio > rec.cpio.gz
+          FRAG="rec.cpio.gz"
+        fi
+        echo "fragment: $FRAG ($(stat -c%s "$FRAG") bytes, budget $MAX_FRAG)"
         
         echo "== 6. assemble + AVB footer =="
         "$HOST/mkbootimg" \
@@ -290,11 +308,15 @@ jobs:
           --tags_offset 0x07c88000 --dtb_offset 0x07c88000 \
           --vendor_ramdisk plat.cpio.lz4 \
           --ramdisk_type RECOVERY --ramdisk_name recovery \
-          --vendor_ramdisk_fragment rec.cpio.lz4 \
+          --vendor_ramdisk_fragment "$FRAG" \
           --vendor_boot vendor_boot_rothko.img
           
         "$HOST/avbtool" add_hash_footer --image vendor_boot_rothko.img \
           --partition_size 67108864 --partition_name vendor_boot
+          
+        echo "== 6.5. sanity check before flashing =="
+        "$HOST/unpack_bootimg" --boot_img vendor_boot_rothko.img --out hdr | tee unpack_info.txt
+        grep -i "compression" unpack_info.txt || true
           
         echo "== 7. purge non-flashable outputs, ship only the repacked image =="
         rm -f "$POUT"/*.img "$POUT"/*.zip
