@@ -311,7 +311,7 @@ jobs:
           --dtb dtb \
           --base 0x3fff8000 --pagesize 4096 --header_version 4 \
           --os_version 14 --os_patch_level "$SPL" \
-          --vendor_cmdline "bootopt=64S3,32N2,64N2" \
+          --vendor_cmdline "bootopt=64S3,32N2,64N2 androidboot.selinux=permissive" \
           --kernel_offset 0x00008000 --ramdisk_offset 0x26f08000 \
           --tags_offset 0x07c88000 --dtb_offset 0x07c88000 \
           --vendor_ramdisk plat.cpio.lz4 \
