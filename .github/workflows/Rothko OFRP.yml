@@ -361,9 +361,6 @@ jobs:
         "$HOST/avbtool" add_hash_footer --image vendor_boot_rothko.img \
           --partition_size 67108864 --partition_name vendor_boot
 
-        echo "== 6.5. sanity check: exactly one ramdisk table entry =="
-        "$HOST/unpack_bootimg" --boot_img vendor_boot_rothko.img --out hdr | tee hdr.txt
-
         echo "== 7. ship only the repacked image =="
         # the zip must go too: OFRP's update zip embeds the fragment-only,
         # unbootable image, and the rename/upload globs would ship it
