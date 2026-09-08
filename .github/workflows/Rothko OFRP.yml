@@ -287,24 +287,55 @@ jobs:
         done
         grep -H security_patch rec/prop.default rec/default.prop || true
 
-        echo "== 5. recompress: LZ4 preferred, gzip fallback =="
+        echo "== 5. merge into ONE unified vendor ramdisk =="
         "$HOST/mkbootfs" -d "$POUT/system" rec > rec.cpio
-        cp "$PLAT_CPIO" plat.cpio
-        "$HOST/lz4" -l -12 -f plat.cpio plat.cpio.lz4
-        "$HOST/lz4" -l -12 -f rec.cpio  rec.cpio.lz4
-        FRAG="rec.cpio.lz4"
+        cp "$PLAT_CPIO" merged.cpio
+        echo "platform cpio: $(stat -c%s merged.cpio) bytes"
 
-        # avbtool usable size (64MiB - footer/vbmeta) minus platform, minus stock dtb,
-        # minus header page + table page + up to 3 alignment pages = 24 KiB slack
-        MAX_FRAG=$(( 67039232 - $(stat -c%s plat.cpio.lz4) - $(stat -c%s dtb) - 24576 ))
-        if [ "$(stat -c%s "$FRAG")" -gt "$MAX_FRAG" ]; then
-          echo "lz4 fragment over budget - falling back to gzip -9"
-          gzip -9 -n -c rec.cpio > rec.cpio.gz
-          FRAG="rec.cpio.gz"
+        # The kernel walks concatenated cpio archives in order (init/initramfs.c):
+        # do_reset() steps over the NUL padding after TRAILER!!! and keeps going,
+        # and do_name() opens regular files with O_TRUNC, so the LAST archive wins.
+        # clean_path() only unlinks when the file *type* differs, so a symlink the
+        # platform archive already created is NOT replaced by a later symlink.
+        # Assert there is no such conflict instead of assuming it.
+        cpio -tv < merged.cpio 2>/dev/null | awk '
+          /^l/ { i = index($0, " -> "); if (i) {
+                   n = split(substr($0, 1, i - 1), f, " ")
+                   print f[n] "|" substr($0, i + 4) } }' > plat.links
+        : > link.conflicts
+        while IFS= read -r line; do
+          p="${line%%|*}"; t="${line#*|}"
+          [ -L "rec/$p" ] || continue
+          [ "$(readlink "rec/$p")" = "$t" ] || \
+            printf '  %s: platform=%s recovery=%s\n' \
+              "$p" "$t" "$(readlink "rec/$p")" >> link.conflicts
+        done < plat.links
+        [ ! -s link.conflicts ] || {
+          echo "FATAL: symlink target conflicts - the platform archive would win:"
+          cat link.conflicts; exit 1; }
+
+        # do_reset() raises error("broken padding") unless the next archive starts
+        # 4-byte aligned
+        pad=$(( (4 - $(stat -c%s merged.cpio) % 4) % 4 ))
+        [ "$pad" -eq 0 ] || head -c "$pad" /dev/zero >> merged.cpio
+        cat rec.cpio >> merged.cpio
+        echo "merged cpio: $(stat -c%s merged.cpio) bytes (pad $pad)"
+
+        echo "== 5b. compress: LZ4 preferred, gzip fallback =="
+        "$HOST/lz4" -l -12 -f merged.cpio merged.cpio.lz4
+        RD="merged.cpio.lz4"
+
+        # avbtool usable size (64MiB - footer/vbmeta) minus stock dtb, minus
+        # header page + table page + up to 3 alignment pages = 24 KiB slack
+        MAX_RD=$(( 67039232 - $(stat -c%s dtb) - 24576 ))
+        if [ "$(stat -c%s "$RD")" -gt "$MAX_RD" ]; then
+          echo "lz4 ramdisk over budget - falling back to gzip -9"
+          gzip -9 -n -c merged.cpio > merged.cpio.gz
+          RD="merged.cpio.gz"
         fi
-        echo "fragment: $FRAG ($(stat -c%s "$FRAG") bytes, budget $MAX_FRAG)"
-        [ "$(stat -c%s "$FRAG")" -le "$MAX_FRAG" ] || {
-          echo "FATAL: even gzip -9 exceeds the budget by $(( $(stat -c%s "$FRAG") - MAX_FRAG )) bytes"; exit 1; }
+        echo "ramdisk: $RD ($(stat -c%s "$RD") bytes, budget $MAX_RD)"
+        [ "$(stat -c%s "$RD")" -le "$MAX_RD" ] || {
+          echo "FATAL: even gzip -9 exceeds the budget by $(( $(stat -c%s "$RD") - MAX_RD )) bytes"; exit 1; }
 
         echo "== 6. assemble + AVB footer =="
         "$HOST/mkbootimg" \
@@ -314,13 +345,23 @@ jobs:
           --vendor_cmdline "bootopt=64S3,32N2,64N2 androidboot.selinux=permissive" \
           --kernel_offset 0x00008000 --ramdisk_offset 0x26f08000 \
           --tags_offset 0x07c88000 --dtb_offset 0x07c88000 \
-          --vendor_ramdisk plat.cpio.lz4 \
-          --ramdisk_type RECOVERY --ramdisk_name recovery \
-          --vendor_ramdisk_fragment "$FRAG" \
+          --vendor_ramdisk "$RD" \
           --vendor_boot vendor_boot_rothko.img
 
         "$HOST/avbtool" add_hash_footer --image vendor_boot_rothko.img \
           --partition_size 67108864 --partition_name vendor_boot
+
+        echo "== 6.5. sanity check: exactly one ramdisk table entry =="
+        "$HOST/unpack_bootimg" --boot_img vendor_boot_rothko.img --out hdr | tee hdr.txt
+        grep -q '^vendor ramdisk table size: 108$' hdr.txt || {
+          echo "FATAL: expected a single 108-byte table entry"
+          grep -i ramdisk hdr.txt; exit 1; }
+        # the v4 ramdisk table has no compression field, so read the magic bytes:
+        # 0221 = lz4, 1f8b = gzip
+        for f in hdr/vendor_ramdisk*; do
+          [ -f "$f" ] || continue
+          printf '%-40s magic=%s\n' "$f" "$(head -c2 "$f" | xxd -p)"
+        done
 
         echo "== 7. ship only the repacked image =="
         # the zip must go too: OFRP's update zip embeds the fragment-only,
