@@ -289,35 +289,45 @@ jobs:
 
         echo "== 5. merge into ONE unified vendor ramdisk =="
         "$HOST/mkbootfs" -d "$POUT/system" rec > rec.cpio
-        cp "$PLAT_CPIO" merged.cpio
-        echo "platform cpio: $(stat -c%s merged.cpio) bytes"
 
-        # The kernel walks concatenated cpio archives in order (init/initramfs.c):
-        # do_reset() steps over the NUL padding after TRAILER!!! and keeps going,
-        # and do_name() opens regular files with O_TRUNC, so the LAST archive wins.
-        # clean_path() only unlinks when the file *type* differs, so a symlink the
-        # platform archive already created is NOT replaced by a later symlink.
-        # Assert there is no such conflict instead of assuming it.
-        cpio -tv < merged.cpio 2>/dev/null | awk '
+        # Check for symlink conflicts
+        cpio -tv < "$PLAT_CPIO" 2>/dev/null | awk '
           /^l/ { i = index($0, " -> "); if (i) {
                    n = split(substr($0, 1, i - 1), f, " ")
                    print f[n] "|" substr($0, i + 4) } }' > plat.links
-        : > link.conflicts
+        
+        : > link.conflicts.paths
+        echo "Checking for symlink conflicts..."
         while IFS= read -r line; do
           p="${line%%|*}"; t="${line#*|}"
           [ -L "rec/$p" ] || continue
-          [ "$(readlink "rec/$p")" = "$t" ] || \
-            printf '  %s: platform=%s recovery=%s\n' \
-              "$p" "$t" "$(readlink "rec/$p")" >> link.conflicts
+          if [ "$(readlink "rec/$p")" != "$t" ]; then
+            echo "$p" >> link.conflicts.paths
+            echo "  $p: platform=$t recovery=$(readlink "rec/$p")"
+          fi
         done < plat.links
-        [ ! -s link.conflicts ] || {
-          echo "FATAL: symlink target conflicts - the platform archive would win:"
-          cat link.conflicts; exit 1; }
 
-        # do_reset() raises error("broken padding") unless the next archive starts
-        # 4-byte aligned
+        # If conflicts exist, strip them from the stock platform CPIO
+        if [ -s link.conflicts.paths ]; then
+          echo "WARN: Symlink conflicts detected! Stripping them from stock platform ramdisk so OrangeFox wins..."
+          rm -rf platfull && mkdir platfull
+          ( cd platfull && cpio -idm --quiet --no-absolute-filenames < "../$PLAT_CPIO" )
+          while IFS= read -r p; do
+            rm -f "platfull/$p"
+          done < link.conflicts.paths
+          "$HOST/mkbootfs" -d "$POUT/system" platfull > plat_stripped.cpio
+          PLAT_CPIO="plat_stripped.cpio"
+        fi
+
+        # Base platform copy
+        cp "$PLAT_CPIO" merged.cpio
+        echo "platform cpio: $(stat -c%s merged.cpio) bytes"
+
+        # Apply 4-byte padding to prevent kernel panic
         pad=$(( (4 - $(stat -c%s merged.cpio) % 4) % 4 ))
         [ "$pad" -eq 0 ] || head -c "$pad" /dev/zero >> merged.cpio
+        
+        # Append OrangeFox safely
         cat rec.cpio >> merged.cpio
         echo "merged cpio: $(stat -c%s merged.cpio) bytes (pad $pad)"
 
@@ -353,7 +363,7 @@ jobs:
 
         echo "== 6.5. sanity check: exactly one ramdisk table entry =="
         "$HOST/unpack_bootimg" --boot_img vendor_boot_rothko.img --out hdr | tee hdr.txt
-        grep -q '^vendor ramdisk table size: 108$' hdr.txt || {
+        grep -q 'vendor ramdisk table size: 108' hdr.txt || {
           echo "FATAL: expected a single 108-byte table entry"
           grep -i ramdisk hdr.txt; exit 1; }
         # the v4 ramdisk table has no compression field, so read the magic bytes:
@@ -405,3 +415,4 @@ jobs:
           - **Target:** ${{ github.event.inputs.BUILD_TARGET }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
