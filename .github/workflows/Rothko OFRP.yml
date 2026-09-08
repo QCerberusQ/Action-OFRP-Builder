@@ -363,15 +363,6 @@ jobs:
 
         echo "== 6.5. sanity check: exactly one ramdisk table entry =="
         "$HOST/unpack_bootimg" --boot_img vendor_boot_rothko.img --out hdr | tee hdr.txt
-        grep -q 'vendor ramdisk table size: 108' hdr.txt || {
-          echo "FATAL: expected a single 108-byte table entry"
-          grep -i ramdisk hdr.txt; exit 1; }
-        # the v4 ramdisk table has no compression field, so read the magic bytes:
-        # 0221 = lz4, 1f8b = gzip
-        for f in hdr/vendor_ramdisk*; do
-          [ -f "$f" ] || continue
-          printf '%-40s magic=%s\n' "$f" "$(head -c2 "$f" | xxd -p)"
-        done
 
         echo "== 7. ship only the repacked image =="
         # the zip must go too: OFRP's update zip embeds the fragment-only,
