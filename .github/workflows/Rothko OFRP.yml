@@ -271,6 +271,15 @@ jobs:
           find rec/twres/languages -type f ! -name 'en.xml' -print -delete || true
         fi
 
+        # --- YENI EKLENEN FBE GUVENLIK VE IZIN KONTROLU ---
+        echo "== 3.5 FBE Artifacts Check & Permissions =="
+        chmod 0755 rec/system/bin/rothko-latemount.sh
+        for f in rec/init.recovery.keymint.rc rec/system/etc/empty-device.xml \
+                 rec/system/bin/se_omapi rec/system/bin/rothko-latemount.sh; do
+          [ -f "$f" ] || { echo "FATAL: FBE artifact $f missing from recovery fragment"; exit 1; }
+        done
+        # --------------------------------------------------
+
         echo "== 4. SPL match (guarded) =="
         rm -rf plat && mkdir plat
         ( cd plat && cpio -idm --quiet --no-absolute-filenames \
