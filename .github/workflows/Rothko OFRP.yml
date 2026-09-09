@@ -367,8 +367,60 @@ jobs:
           --vendor_ramdisk "$RD" \
           --vendor_boot vendor_boot_rothko.img
 
+        # Self-contained sanity check (no unpack_bootimg in the build env).
+        # Reads the vendor_boot v4 header directly. Exits non-zero on a two-fragment
+        # or non-platform pack, so a silent regression back to the unbootable layout
+        # can never be uploaded. Offsets verified against AOSP mkbootimg.py.
+        cat > check_vb.py <<'PY'
+        import struct, sys
+
+        def pages(sz, ps):
+            return (sz + ps - 1) // ps
+
+        with open(sys.argv[1], 'rb') as f:
+            d = f.read()
+
+        if d[0:8] != b'VNDRBOOT':
+            print("FATAL: not a vendor_boot image", file=sys.stderr); sys.exit(1)
+
+        hdr_ver = struct.unpack_from('<I', d, 8)[0]
+        page_sz = struct.unpack_from('<I', d, 12)[0]
+        rd_sz   = struct.unpack_from('<I', d, 24)[0]
+        hdr_sz  = struct.unpack_from('<I', d, 2096)[0]
+        dtb_sz  = struct.unpack_from('<I', d, 2100)[0]
+
+        if hdr_ver < 4:
+            print(f"FATAL: header_version {hdr_ver} is not vendor_boot v4", file=sys.stderr)
+            sys.exit(1)
+
+        # Four v4 uint32 fields follow the 2112-byte v3 header.
+        t_size, entry_num, entry_size, _ = struct.unpack_from('<IIII', d, 2112)
+
+        if entry_num != 1:
+            print(f"FATAL: {entry_num} vendor ramdisk entries (expected 1)", file=sys.stderr)
+            sys.exit(1)
+        if entry_size != 108:
+            print(f"FATAL: table entry size {entry_size} (expected 108)", file=sys.stderr)
+            sys.exit(1)
+        if t_size != entry_size * entry_num:
+            print(f"FATAL: table size {t_size}", file=sys.stderr)
+            sys.exit(1)
+
+        # First table entry sits right after header+ramdisk+dtb pages.
+        off = page_sz * (pages(hdr_sz, page_sz) + pages(rd_sz, page_sz) + pages(dtb_sz, page_sz))
+        f_size, f_offset, f_type = struct.unpack_from('<III', d, off)
+
+        if f_type != 0x1:
+            print(f"FATAL: vendor ramdisk type 0x{f_type:x} (expected 0x1 platform)", file=sys.stderr)
+            sys.exit(1)
+
+        print(f"OK single fragment: count=1 type=0x1 ramdisk_size={f_size} bytes")
+        PY
+        python3 check_vb.py vendor_boot_rothko.img
+
         "$HOST/avbtool" add_hash_footer --image vendor_boot_rothko.img \
-          --partition_size 67108864 --partition_name vendor_boot
+          --partition_size 67108864 --partition_name vendor_boot \
+          --prop "com.android.build.vendor_boot.fingerprint:$(cat "$POUT/build_fingerprint.txt")"
 
         echo "== 7. ship only the repacked image =="
         # the zip must go too: OFRP's update zip embeds the fragment-only,
@@ -376,7 +428,6 @@ jobs:
         find "$POUT" -maxdepth 1 \( -name '*.img' -o -name '*.zip' \) -delete
         cp vendor_boot_rothko.img "$POUT/OrangeFox-Rothko-Repacked.img"
         ls -lh "$POUT/"
-      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Rename outputs with Date
       run: |
