@@ -255,6 +255,41 @@ jobs:
         [ ! -f "$PLAT_CPIO" ] && PLAT_CPIO="vendor_ramdisk/ramdisk.cpio"
         test -f "$PLAT_CPIO" || { echo "FATAL: platform ramdisk ($PLAT_CPIO) not found"; exit 1; }
 
+        echo "== 1b. carry the stock vendor_cmdline / bootconfig forward =="
+        # AOSP does not install unpack_bootimg into $HOST, so read the v4
+        # header directly. Offsets per system/tools/mkbootimg/mkbootimg.py:
+        # page_size@12, vendor_ramdisk_size@24, cmdline[2048]@28,
+        # header_size@2096, dtb_size@2100, table_size@2112, bootconfig_size@2124.
+        python3 - <<'PY'
+        import struct
+        d = open("stock.img", "rb").read()
+        assert d[:8] == b"VNDRBOOT", "stock.img is not a vendor_boot image"
+        page = struct.unpack_from("<I", d, 12)[0]
+        vrs  = struct.unpack_from("<I", d, 24)[0]
+        cmd  = d[28:28 + 2048].split(b"\x00")[0].decode()
+        hs, dtbs = struct.unpack_from("<II", d, 2096)
+        ts   = struct.unpack_from("<I", d, 2112)[0]
+        bcs  = struct.unpack_from("<I", d, 2124)[0]
+        al = lambda x: (x + page - 1) // page * page
+        off = al(hs) + al(vrs) + al(dtbs) + al(ts)
+        open("stock_cmdline.txt", "w").write(" ".join(cmd.split()))
+        open("stock_bootconfig", "wb").write(d[off:off + bcs] if bcs else b"")
+        print(f"stock vendor_cmdline : {cmd!r}")
+        print(f"stock bootconfig     : {bcs} bytes @ {off}")
+        PY
+        STOCK_CMDLINE=$(cat stock_cmdline.txt)
+        # recovery runs permissive; append only if stock does not already set it
+        case "$STOCK_CMDLINE" in
+          *androidboot.selinux=*) ;;
+          *) STOCK_CMDLINE="$STOCK_CMDLINE androidboot.selinux=permissive" ;;
+        esac
+        BOOTCONFIG_ARG=""
+        if [ -s stock_bootconfig ]; then
+          BOOTCONFIG_ARG="--vendor_bootconfig stock_bootconfig"
+        fi
+        echo "vendor_cmdline -> $STOCK_CMDLINE"
+        echo "bootconfig arg -> ${BOOTCONFIG_ARG:-<none>}"
+
         echo "== 2. recovery fragment: decompress + extract =="
         "$HOST/lz4" -d -f "$REC_SRC" fox.cpio
         rm -rf rec && mkdir rec
@@ -273,9 +308,10 @@ jobs:
 
         # --- YENI EKLENEN FBE GUVENLIK VE IZIN KONTROLU ---
         echo "== 3.5 FBE Artifacts Check & Permissions =="
-        chmod 0755 rec/system/bin/rothko-latemount.sh
+        chmod 0755 rec/system/bin/rothko-latemount.sh rec/system/bin/rothko-weaver.sh
         for f in rec/init.recovery.keymint.rc rec/system/etc/empty-device.xml \
-                 rec/system/bin/se_omapi rec/system/bin/rothko-latemount.sh; do
+                 rec/system/bin/se_omapi rec/system/bin/rothko-latemount.sh \
+                 rec/system/bin/rothko-weaver.sh; do
           [ -f "$f" ] || { echo "FATAL: FBE artifact $f missing from recovery fragment"; exit 1; }
         done
         # --------------------------------------------------
@@ -346,7 +382,7 @@ jobs:
 
         # avbtool usable size (64MiB - footer/vbmeta) minus stock dtb, minus
         # header page + table page + up to 3 alignment pages = 24 KiB slack
-        MAX_RD=$(( 67039232 - $(stat -c%s dtb) - 24576 ))
+        MAX_RD=$(( 67039232 - $(stat -c%s dtb) - $(stat -c%s stock_bootconfig) - 24576 ))
         if [ "$(stat -c%s "$RD")" -gt "$MAX_RD" ]; then
           echo "lz4 ramdisk over budget - falling back to gzip -9"
           gzip -9 -n -c merged.cpio > merged.cpio.gz
@@ -361,10 +397,11 @@ jobs:
           --dtb dtb \
           --base 0x3fff8000 --pagesize 4096 --header_version 4 \
           --os_version 14 --os_patch_level "$SPL" \
-          --vendor_cmdline "bootopt=64S3,32N2,64N2 androidboot.selinux=permissive" \
+          --vendor_cmdline "$STOCK_CMDLINE" \
           --kernel_offset 0x00008000 --ramdisk_offset 0x26f08000 \
           --tags_offset 0x07c88000 --dtb_offset 0x07c88000 \
           --vendor_ramdisk "$RD" \
+          $BOOTCONFIG_ARG \
           --vendor_boot vendor_boot_rothko.img
 
         # Self-contained sanity check (no unpack_bootimg in the build env).
