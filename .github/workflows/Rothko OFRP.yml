@@ -327,7 +327,7 @@ jobs:
         echo "recovery fragment: $(stat -c%s rec.cpio.lz4) bytes"
 
         echo "== 6. inject into the stock 2-fragment container =="
-        python3 "$DEV/.github/workflows/repack_2frag.py" \
+        python3 "${{ github.workspace }}/.github/workflows/repack_2frag.py" \
           stock.img rec.cpio.lz4 vendor_boot_rothko.img
 
         echo "== 6b. rebuild the AVB footer =="
