@@ -290,6 +290,7 @@ jobs:
         rm -f  rec/twres/fonts/DroidSansFallback.ttf
         rm -rf rec/system/etc/terminfo
         rm -f  rec/sbin/bash rec/sbin/magiskboot
+        rm -f  rec/init.recovery.keymint.rc
 
         # keep only en.xml; TW_EXTRA_LANGUAGES=false should already have done this,
         # so report what is actually removed to confirm the build flag works
