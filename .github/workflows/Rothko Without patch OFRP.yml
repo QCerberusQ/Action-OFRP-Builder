@@ -210,6 +210,11 @@ jobs:
       run: |
         cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
 
+        echo "== Brute-force Dil Silme Islemi (Sadece Ingilizce birakiliyor) =="
+        if [ -d bootable/recovery/gui/theme/common/languages ]; then
+          find bootable/recovery/gui/theme/common/languages -type f ! -name 'en.xml' -print -delete || true
+        fi
+
         set +e
         source build/envsetup.sh
         export ALLOW_MISSING_DEPENDENCIES=true
