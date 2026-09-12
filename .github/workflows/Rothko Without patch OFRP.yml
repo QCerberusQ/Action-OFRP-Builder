@@ -209,11 +209,6 @@ jobs:
     - name: Building recovery
       run: |
         cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
-        
-        echo "== Brute-force Dil Silme Islemi (Sadece Ingilizce birakiliyor) =="
-        if [ -d bootable/recovery/gui/theme/common/languages ]; then
-          find bootable/recovery/gui/theme/common/languages -type f ! -name 'en.xml' -print -delete || true
-        fi
 
         set +e
         source build/envsetup.sh
@@ -235,7 +230,7 @@ jobs:
         done
         echo "Tum FBE dosyalari basariyla ramdisk'e eklendi!"
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
-
+      
     - name: Rename outputs with Date
       run: |
         BUILD_DATE=$(TZ=Asia/Istanbul date +%Y%m%d)
