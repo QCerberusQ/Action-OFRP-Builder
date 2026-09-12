@@ -219,7 +219,16 @@ jobs:
         else
           lunch ${{ github.event.inputs.MAKEFILE_NAME }}-eng && make clean && mka adbd ${{ github.event.inputs.BUILD_TARGET }}image -j$(nproc --all)
         fi
-        
+
+        echo "== FBE Artifact Check =="
+        OUT="${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}/out"
+        for f in \
+          "$OUT/target/product/${{ github.event.inputs.DEVICE_NAME }}/recovery/root/system/bin/se_omapi" \
+          "$OUT/target/product/${{ github.event.inputs.DEVICE_NAME }}/recovery/root/system/lib64/android.se.omapi-V1-ndk.so" \
+          "$OUT/target/product/${{ github.event.inputs.DEVICE_NAME }}/recovery/root/system/lib64/android.hardware.secure_element-V1-ndk.so"; do
+          [ -f "$f" ] || { echo "FATAL: $f missing from recovery ramdisk"; exit 1; }
+        done
+        echo "Tum FBE dosyalari basariyla ramdisk'e eklendi!"
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Repack Vendor Boot for Rothko
@@ -289,8 +298,6 @@ jobs:
         echo "== 3. trim =="
         rm -f  rec/twres/fonts/DroidSansFallback.ttf
         rm -rf rec/system/etc/terminfo
-        rm -f  rec/sbin/bash rec/sbin/magiskboot
-        rm -f  rec/init.recovery.keymint.rc
 
         # keep only en.xml; TW_EXTRA_LANGUAGES=false should already have done this,
         # so report what is actually removed to confirm the build flag works
