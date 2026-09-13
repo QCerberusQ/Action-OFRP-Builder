@@ -298,7 +298,6 @@ jobs:
         echo "== 3. trim =="
         rm -f  rec/twres/fonts/DroidSansFallback.ttf
         rm -rf rec/system/etc/terminfo
-        rm -f  rec/sbin/bash rec/sbin/magiskboot
 
         # keep only en.xml; TW_EXTRA_LANGUAGES=false should already have done this,
         # so report what is actually removed to confirm the build flag works
@@ -328,37 +327,21 @@ jobs:
           sed -i "s/^ro.vendor.build.security_patch=.*/ro.vendor.build.security_patch=$SPL/" "$f"
         done
         grep -H security_patch rec/prop.default rec/default.prop || true
-
-        echo "== 5. pack OrangeFox as the type-2 recovery fragment =="
-        "$HOST/mkbootfs" -d "$POUT/system" rec > rec.cpio
         
-        echo "--> LZ4 ile sıkıştırılıyor..."
-        "$HOST/lz4" -l -12 --favor-decSpeed -f rec.cpio rec.cpio.payload
-        echo "LZ4 fragment boyutu: $(stat -c%s rec.cpio.payload) bytes"
-
-        echo "== 6. inject into the stock 2-fragment container =="
-        # LZ4 boyuttan dolayı patlarsa GitHub'ın durmasını engellemek için hata kontrolünü kapatıyoruz
-        set +e 
-        python3 "${{ github.workspace }}/.github/workflows/repack_2frag.py" \
-          stock.img rec.cpio.payload vendor_boot_rothko.img
-        REPACK_STATUS=$?
-        set -e # Hata kontrolünü geri aç
+        echo "== 5. OrangeFox'u Recovery CPIO Olarak Hazırla =="
+        # 1. adımda magiskboot imajı açtığında stok ramdisk'leri 'vendor_ramdisk/' klasörüne koymuştu.
+        # Biz de mkbootfs ile ürettiğimiz OrangeFox'u DOĞRUDAN o klasördeki stok dosyanın üzerine yazıyoruz!
+        rm -f vendor_ramdisk/recovery.cpio
+        "$HOST/mkbootfs" -d "$POUT/system" rec > vendor_ramdisk/recovery.cpio
         
-        # Eğer LZ4 boyut sınırını aştıysa (Hata Kodu 0 değilse) GZIP'e geç!
-        if [ $REPACK_STATUS -ne 0 ]; then
-            echo "==============================================================="
-            echo "⚠️ LZ4 BOYUTU SINIRI AŞTI! DAHA GÜÇLÜ OLAN GZIP'E GEÇİLİYOR..."
-            echo "==============================================================="
-            rm -f rec.cpio.payload vendor_boot_rothko.img # Başarısız LZ4 dosyasını sil
-            
-            # GZIP ile maksimum seviyede (-9) sıkıştır
-            gzip -9 -c rec.cpio > rec.cpio.payload
-            echo "GZIP fragment boyutu: $(stat -c%s rec.cpio.payload) bytes"
-            
-            echo "== 6 (Tekrar). inject into the stock 2-fragment container (GZIP) =="
-            python3 "${{ github.workspace }}/.github/workflows/repack_2frag.py" \
-              stock.img rec.cpio.payload vendor_boot_rothko.img
-        fi
+        echo "== 6. Magiskboot ile GZIP Repack (APK TAKTİĞİ) =="
+        # Magiskboot repack komutu; bulunduğu dizindeki dtb dosyasını ve 'vendor_ramdisk' klasörünü 
+        # otomatik olarak algılayıp stock.img'in içine yeniden paketler.
+        export MAGISKBOOT_COMPRESS=gzip
+        "$MAGISKBOOT" repack stock.img vendor_boot_rothko.img
+        
+        echo "GZIP ile Paketlenmiş Yeni İmaj Boyutu:"
+        stat -c%s vendor_boot_rothko.img
 
         echo "== 6b. rebuild the AVB footer =="
         "$HOST/avbtool" add_hash_footer --image vendor_boot_rothko.img \
