@@ -331,12 +331,34 @@ jobs:
 
         echo "== 5. pack OrangeFox as the type-2 recovery fragment =="
         "$HOST/mkbootfs" -d "$POUT/system" rec > rec.cpio
-        "$HOST/lz4" -l -12 --favor-decSpeed -f rec.cpio rec.cpio.lz4
-        echo "recovery fragment: $(stat -c%s rec.cpio.lz4) bytes"
+        
+        echo "--> LZ4 ile sıkıştırılıyor..."
+        "$HOST/lz4" -l -12 --favor-decSpeed -f rec.cpio rec.cpio.payload
+        echo "LZ4 fragment boyutu: $(stat -c%s rec.cpio.payload) bytes"
 
         echo "== 6. inject into the stock 2-fragment container =="
+        # LZ4 boyuttan dolayı patlarsa GitHub'ın durmasını engellemek için hata kontrolünü kapatıyoruz
+        set +e 
         python3 "${{ github.workspace }}/.github/workflows/repack_2frag.py" \
-          stock.img rec.cpio.lz4 vendor_boot_rothko.img
+          stock.img rec.cpio.payload vendor_boot_rothko.img
+        REPACK_STATUS=$?
+        set -e # Hata kontrolünü geri aç
+        
+        # Eğer LZ4 boyut sınırını aştıysa (Hata Kodu 0 değilse) GZIP'e geç!
+        if [ $REPACK_STATUS -ne 0 ]; then
+            echo "==============================================================="
+            echo "⚠️ LZ4 BOYUTU SINIRI AŞTI! DAHA GÜÇLÜ OLAN GZIP'E GEÇİLİYOR..."
+            echo "==============================================================="
+            rm -f rec.cpio.payload vendor_boot_rothko.img # Başarısız LZ4 dosyasını sil
+            
+            # GZIP ile maksimum seviyede (-9) sıkıştır
+            gzip -9 -c rec.cpio > rec.cpio.payload
+            echo "GZIP fragment boyutu: $(stat -c%s rec.cpio.payload) bytes"
+            
+            echo "== 6 (Tekrar). inject into the stock 2-fragment container (GZIP) =="
+            python3 "${{ github.workspace }}/.github/workflows/repack_2frag.py" \
+              stock.img rec.cpio.payload vendor_boot_rothko.img
+        fi
 
         echo "== 6b. rebuild the AVB footer =="
         "$HOST/avbtool" add_hash_footer --image vendor_boot_rothko.img \
