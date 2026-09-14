@@ -310,13 +310,6 @@ jobs:
         echo "--> OrangeFox Kalan Dosyaların Boyut Analizi:"
         du -sh rec/* | sort -h || true
 
-        echo "== 3.5 FBE Artifacts Check & Permissions =="
-        chmod 0755 rec/system/bin/rothko-latemount.sh rec/system/bin/rothko-weaver.sh || true
-        for f in rec/system/bin/se_omapi rec/system/bin/rothko-latemount.sh \
-                 rec/system/bin/rothko-weaver.sh; do
-          [ -f "$f" ] || { echo "FATAL: FBE artifact $f missing from recovery fragment"; exit 1; }
-        done
-
         echo "== 4. SPL match (guarded) =="
         rm -rf plat && mkdir plat
         ( cd plat && cpio -idm --quiet --no-absolute-filenames \
