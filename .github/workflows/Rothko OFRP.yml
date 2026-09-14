@@ -256,10 +256,6 @@ jobs:
         test -f "$PLAT_CPIO" || { echo "FATAL: platform ramdisk ($PLAT_CPIO) not found"; exit 1; }
 
         echo "== 1b. carry the stock vendor_cmdline / bootconfig forward =="
-        # AOSP does not install unpack_bootimg into $HOST, so read the v4
-        # header directly. Offsets per system/tools/mkbootimg/mkbootimg.py:
-        # page_size@12, vendor_ramdisk_size@24, cmdline[2048]@28,
-        # header_size@2096, dtb_size@2100, table_size@2112, bootconfig_size@2124.
         python3 - <<'PY'
         import struct
         d = open("stock.img", "rb").read()
@@ -278,7 +274,6 @@ jobs:
         print(f"stock bootconfig     : {bcs} bytes @ {off}")
         PY
         STOCK_CMDLINE=$(cat stock_cmdline.txt)
-        # recovery runs permissive; append only if stock does not already set it
         case "$STOCK_CMDLINE" in
           *androidboot.selinux=*) ;;
           *) STOCK_CMDLINE="$STOCK_CMDLINE androidboot.selinux=permissive" ;;
@@ -295,18 +290,28 @@ jobs:
         rm -rf rec && mkdir rec
         ( cd rec && cpio -idm --quiet --no-absolute-filenames < ../fox.cpio )
 
-        echo "== 3. trim =="
+        echo "== 3. trim (Agresif Boyut Küçültme ve Analiz) =="
         rm -f  rec/twres/fonts/DroidSansFallback.ttf
         rm -rf rec/system/etc/terminfo
+        rm -f  rec/sbin/bash rec/sbin/magiskboot
 
-        # keep only en.xml; TW_EXTRA_LANGUAGES=false should already have done this,
-        # so report what is actually removed to confirm the build flag works
+        # EN BÜYÜK YER KAPLAYANLARI SİLİYORUZ (.ko SÜRÜCÜLERİ):
+        # Sürücüler zaten stok frag[0] içinde var, OrangeFox'un içinde olmalarına gerek yok!
+        find rec/ -name "*.ko" -delete
+        rm -rf rec/vendor/lib/modules rec/vendor/lib64/modules
+        rm -rf rec/system/lib/modules rec/system/lib64/modules
+        rm -rf rec/res/simg2img
+
+        # Sadece İngilizce kalsın, diğer dilleri sil
         if [ -d rec/twres/languages ]; then
           find rec/twres/languages -type f ! -name 'en.xml' -print -delete || true
         fi
+        
+        echo "--> OrangeFox Kalan Dosyaların Boyut Analizi:"
+        du -sh rec/* | sort -h || true
 
         echo "== 3.5 FBE Artifacts Check & Permissions =="
-        chmod 0755 rec/system/bin/rothko-latemount.sh rec/system/bin/rothko-weaver.sh
+        chmod 0755 rec/system/bin/rothko-latemount.sh rec/system/bin/rothko-weaver.sh || true
         for f in rec/system/bin/se_omapi rec/system/bin/rothko-latemount.sh \
                  rec/system/bin/rothko-weaver.sh; do
           [ -f "$f" ] || { echo "FATAL: FBE artifact $f missing from recovery fragment"; exit 1; }
@@ -316,7 +321,6 @@ jobs:
         rm -rf plat && mkdir plat
         ( cd plat && cpio -idm --quiet --no-absolute-filenames \
             prop.default default.prop < "../$PLAT_CPIO" ) || true
-        # -m1 is per-file, so head -n1 is required when both files carry the line
         SPL=$(grep -hm1 '^ro.build.version.security_patch=' \
                 plat/prop.default plat/default.prop 2>/dev/null | cut -d= -f2 | head -n1 || true)
         echo "Stock SPL: $SPL"
@@ -327,16 +331,13 @@ jobs:
           sed -i "s/^ro.vendor.build.security_patch=.*/ro.vendor.build.security_patch=$SPL/" "$f"
         done
         grep -H security_patch rec/prop.default rec/default.prop || true
-        
+
         echo "== 5. OrangeFox'u Recovery CPIO Olarak Hazırla =="
-        # 1. adımda magiskboot imajı açtığında stok ramdisk'leri 'vendor_ramdisk/' klasörüne koymuştu.
-        # Biz de mkbootfs ile ürettiğimiz OrangeFox'u DOĞRUDAN o klasördeki stok dosyanın üzerine yazıyoruz!
+        # Stok recovery'yi silip yerine bizim CPIO'yu yerleştiriyoruz
         rm -f vendor_ramdisk/recovery.cpio
         "$HOST/mkbootfs" -d "$POUT/system" rec > vendor_ramdisk/recovery.cpio
         
         echo "== 6. Magiskboot ile GZIP Repack (APK TAKTİĞİ) =="
-        # Magiskboot repack komutu; bulunduğu dizindeki dtb dosyasını ve 'vendor_ramdisk' klasörünü 
-        # otomatik olarak algılayıp stock.img'in içine yeniden paketler.
         export MAGISKBOOT_COMPRESS=gzip
         "$MAGISKBOOT" repack stock.img vendor_boot_rothko.img
         
@@ -349,8 +350,6 @@ jobs:
           --prop "com.android.build.vendor_boot.fingerprint:$(cat "$POUT/build_fingerprint.txt")"
 
         echo "== 7. ship only the repacked image =="
-        # the zip must go too: OFRP's update zip embeds the fragment-only,
-        # unbootable image, and the rename/upload globs would ship it
         find "$POUT" -maxdepth 1 \( -name '*.img' -o -name '*.zip' \) -delete
         cp vendor_boot_rothko.img "$POUT/OrangeFox-Rothko-Repacked.img"
         ls -lh "$POUT/"
@@ -389,4 +388,3 @@ jobs:
           - **Target:** ${{ github.event.inputs.BUILD_TARGET }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        
