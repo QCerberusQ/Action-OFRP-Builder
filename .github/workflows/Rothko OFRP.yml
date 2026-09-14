@@ -228,7 +228,7 @@ jobs:
           "$OUT/target/product/${{ github.event.inputs.DEVICE_NAME }}/recovery/root/system/lib64/android.hardware.secure_element-V1-ndk.so"; do
           [ -f "$f" ] || { echo "FATAL: $f missing from recovery ramdisk"; exit 1; }
         done
-        echo "Tum FBE dosyalari basariyla ramdisk'e eklendi!"
+        echo "Tum FBE dosyalari basariyla eklendi!"
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Repack Vendor Boot for Rothko
@@ -239,11 +239,14 @@ jobs:
         POUT="$OUT/target/product/${{ github.event.inputs.DEVICE_NAME }}"
         MAGISKBOOT="$FOX/vendor/recovery/tools/magiskboot"
         DEV="$FOX/device/xiaomi/${{ github.event.inputs.DEVICE_NAME }}"
+        REPACK="$DEV/tools/repack_vendor_boot.py"
         REC_SRC="$POUT/obj/PACKAGING/vendor_ramdisk_fragments_intermediates/recovery.cpio.lz4"
         STOCK="$DEV/prebuilt/stock_vendor_boot.img"
         WORK=$(mktemp -d); cd "$WORK"; trap 'cd /; rm -rf "$WORK"' EXIT
 
         test -f "$REC_SRC" || { echo "FATAL: fragment $REC_SRC missing"; exit 1; }
+        test -f "$STOCK"  || { echo "FATAL: stock image $STOCK missing"; exit 1; }
+        test -f "$REPACK" || { echo "FATAL: $REPACK missing from the device tree (tools/repack_vendor_boot.py)"; exit 1; }
 
         echo "== 1. unpack stock (NO -n: full decompression) =="
         cp "$STOCK" stock.img
@@ -255,35 +258,21 @@ jobs:
         [ ! -f "$PLAT_CPIO" ] && PLAT_CPIO="vendor_ramdisk/ramdisk.cpio"
         test -f "$PLAT_CPIO" || { echo "FATAL: platform ramdisk ($PLAT_CPIO) not found"; exit 1; }
 
-        echo "== 1b. carry the stock vendor_cmdline / bootconfig forward =="
+        echo "== 1b. show stock vendor_cmdline (informational) =="
+        # tools/repack_vendor_boot.py copies the header page (cmdline included)
+        # and the bootconfig/tail region verbatim, and appends
+        # androidboot.selinux=permissive to the cmdline if missing — the same
+        # behavior as the on-device installer's
+        # VendorBootImage.ensureCmdlineToken(). The stock cmdline is only
+        # "bootopt=64S3,32N2,64N2" and does NOT contain the token.
         python3 - <<'PY'
-        import struct
         d = open("stock.img", "rb").read()
         assert d[:8] == b"VNDRBOOT", "stock.img is not a vendor_boot image"
-        page = struct.unpack_from("<I", d, 12)[0]
-        vrs  = struct.unpack_from("<I", d, 24)[0]
-        cmd  = d[28:28 + 2048].split(b"\x00")[0].decode()
-        hs, dtbs = struct.unpack_from("<II", d, 2096)
-        ts   = struct.unpack_from("<I", d, 2112)[0]
-        bcs  = struct.unpack_from("<I", d, 2124)[0]
-        al = lambda x: (x + page - 1) // page * page
-        off = al(hs) + al(vrs) + al(dtbs) + al(ts)
-        open("stock_cmdline.txt", "w").write(" ".join(cmd.split()))
-        open("stock_bootconfig", "wb").write(d[off:off + bcs] if bcs else b"")
-        print(f"stock vendor_cmdline : {cmd!r}")
-        print(f"stock bootconfig     : {bcs} bytes @ {off}")
+        cmd = d[28:28 + 2048].split(b"\x00")[0].decode()
+        print("stock vendor_cmdline : %r" % cmd)
+        print("selinux token present: %s" %
+              ("androidboot.selinux=permissive" in cmd.split()))
         PY
-        STOCK_CMDLINE=$(cat stock_cmdline.txt)
-        case "$STOCK_CMDLINE" in
-          *androidboot.selinux=*) ;;
-          *) STOCK_CMDLINE="$STOCK_CMDLINE androidboot.selinux=permissive" ;;
-        esac
-        BOOTCONFIG_ARG=""
-        if [ -s stock_bootconfig ]; then
-          BOOTCONFIG_ARG="--vendor_bootconfig stock_bootconfig"
-        fi
-        echo "vendor_cmdline -> $STOCK_CMDLINE"
-        echo "bootconfig arg -> ${BOOTCONFIG_ARG:-<none>}"
 
         echo "== 2. recovery fragment: decompress + extract =="
         "$HOST/lz4" -d -f "$REC_SRC" fox.cpio
@@ -306,7 +295,7 @@ jobs:
         if [ -d rec/twres/languages ]; then
           find rec/twres/languages -type f ! -name 'en.xml' -print -delete || true
         fi
-        
+
         echo "--> OrangeFox Kalan Dosyaların Boyut Analizi:"
         du -sh rec/* | sort -h || true
 
@@ -325,17 +314,35 @@ jobs:
         done
         grep -H security_patch rec/prop.default rec/default.prop || true
 
-        echo "== 5. OrangeFox'u Recovery CPIO Olarak Hazırla =="
-        # Stok recovery'yi silip yerine bizim CPIO'yu yerleştiriyoruz
-        rm -f vendor_ramdisk/recovery.cpio
-        "$HOST/mkbootfs" -d "$POUT/system" rec > vendor_ramdisk/recovery.cpio
-        
-        echo "== 6. Magiskboot ile GZIP Repack (APK TAKTİĞİ) =="
-        export MAGISKBOOT_COMPRESS=gzip
-        "$MAGISKBOOT" repack stock.img vendor_boot_rothko.img
-        
-        echo "GZIP ile Paketlenmiş Yeni İmaj Boyutu:"
-        stat -c%s vendor_boot_rothko.img
+        echo "== 5. build the new recovery cpio (newc) =="
+        "$HOST/mkbootfs" -d "$POUT/system" rec > rec.cpio
+        ls -l rec.cpio
+
+        echo "== 6. repack: EXPLICIT gzip + cmdline token + table rebuild =="
+        # WHY NOT magiskboot repack:
+        #   magiskboot repack IGNORES the MAGISKBOOT_COMPRESS env var. It
+        #   reuses the compression format detected at *unpack* time; a fresh
+        #   mkbootfs cpio (magic 070701) is classified as "raw" and stored
+        #   UNCOMPRESSED (~69.5 MiB), which then fails avbtool with
+        #   "Image size of 70012928 exceeds maximum image size of 67039232".
+        # tools/repack_vendor_boot.py instead:
+        #   - compresses the recovery cpio explicitly (pure-python gzip-9),
+        #   - appends androidboot.selinux=permissive to the vendor_boot
+        #     cmdline if missing (default; --cmdline-token "" disables),
+        #   - keeps the stock platform fragment (41 MiB, lz4-legacy), dtb,
+        #     header page and bootconfig tail region byte-identical,
+        #   - rebuilds the v4 fragment table + vendor_ramdisk_size,
+        #   - exits non-zero if the body would not fit the 64 MiB partition
+        #     (partition 67108864 - 69632 AVB reserved = 67039232).
+        # If the trimmed ramdisk ever outgrows the partition again, re-run
+        # with --recompress-platform to also gzip the stock platform
+        # fragment (~41 MiB lz4-legacy -> ~13 MiB gzip).
+        python3 "$REPACK" \
+          --stock stock.img \
+          --recovery-cpio rec.cpio \
+          --compress gzip \
+          --output vendor_boot_rothko.img
+        ls -lh vendor_boot_rothko.img
 
         echo "== 6b. rebuild the AVB footer =="
         "$HOST/avbtool" add_hash_footer --image vendor_boot_rothko.img \
