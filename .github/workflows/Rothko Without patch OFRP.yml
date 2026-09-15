@@ -178,32 +178,6 @@ jobs:
         diff -u "$F.orig" "$F" || true
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
-    - name: Patch se_omapi binary for recovery
-      run: |
-        set -euo pipefail
-        SRC="${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}"
-
-        BP=""
-        for cand in \
-          "$SRC/frameworks/base/omapi/se_omapi/Android.bp" \
-          "$SRC/frameworks/base/omapi/Android.bp" \
-          "$SRC/system/se_omapi/Android.bp"; do
-          if [ -f "$cand" ] && grep -q 'name: "se_omapi"' "$cand"; then
-            BP="$cand"; break
-          fi
-        done
-        [ -n "$BP" ] || { echo "FATAL: se_omapi module not found"; exit 1; }
-        echo "Found: $BP"
-
-        if grep -q "recovery_available: true" "$BP"; then
-          echo "SKIP: already patched"
-        else
-          sed -i '/name: "se_omapi",/a\    recovery_available: true,' "$BP"
-          echo "PATCHED"
-        fi
-        grep -A6 'name: "se_omapi",' "$BP" | head -10
-      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
-
     - name: Patch SE and OMAPI AIDL Interfaces
       run: |
         set -euo pipefail
