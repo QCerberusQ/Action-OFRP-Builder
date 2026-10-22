@@ -98,29 +98,19 @@ jobs:
         distribution: 'zulu'
         java-version: '17'
 
-    - name: Setup SSH Keys
-      if: |
-        startsWith(github.event.inputs.SYNC_URL, 'git@github.com') ||
-        startsWith(github.event.inputs.DEVICE_TREE_URL, 'git@github.com') ||
-        startsWith(github.event.inputs.COMMON_TREE_URL, 'git@github.com')
-      uses: webfactory/ssh-agent@v0.9.0
-      with:
-        ssh-private-key: |
-          ${{ secrets.SSH_PRIVATE_KEY }}
-
-    - name: Sync AERA sources and minimal manifest
+    - name: Sync AERA sources
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
       run: |
-        AERA_DIR="${{ steps.pwd.outputs.workspace-folder }}/AERA_src"
+        AERA_DIR="${{ steps.pwd.outputs.workspace-folder }}/AERA_16.0"
         mkdir -p "$AERA_DIR"
         cd "$AERA_DIR"
-        repo init --depth=1 -u "$SYNC_URL" -b "$MANIFEST_BRANCH"
-        repo sync -c -j"$(nproc --all)" --force-sync --no-clone-bundle --no-tags
+        repo init -u "$SYNC_URL" -b "$MANIFEST_BRANCH"
+        repo sync -c --force-sync --no-clone-bundle --no-tags -j$(nproc)
 
     - name: Clone device tree
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
       run: |
-        cd "${{ steps.pwd.outputs.workspace-folder }}/AERA_src"
+        cd "${{ steps.pwd.outputs.workspace-folder }}/AERA_16.0"
         git clone "$DEVICE_TREE_URL" -b "$DEVICE_TREE_BRANCH" "./$DEVICE_PATH"
 
     - name: Clone common tree
@@ -129,7 +119,7 @@ jobs:
         github.event.inputs.COMMON_PATH != ''
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
       run: |
-        cd "${{ steps.pwd.outputs.workspace-folder }}/AERA_src"
+        cd "${{ steps.pwd.outputs.workspace-folder }}/AERA_16.0"
         git clone "$COMMON_TREE_URL" -b "$DEVICE_TREE_BRANCH" "./$COMMON_PATH"
 
     - name: Set Swap Space
@@ -140,7 +130,7 @@ jobs:
     - name: Building AERA Recovery
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
       run: |
-        cd "${{ steps.pwd.outputs.workspace-folder }}/AERA_src"
+        cd "${{ steps.pwd.outputs.workspace-folder }}/AERA_16.0"
 
         export AERA_BUILD_DEVICE="$DEVICE_NAME"
         export ALLOW_MISSING_DEPENDENCIES=true
@@ -161,7 +151,7 @@ jobs:
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
       run: |
         BUILD_DATE=$(TZ=Asia/Istanbul date +%Y%m%d)
-        OUT_DIR="${{ steps.pwd.outputs.workspace-folder }}/AERA_src/out/target/product/$DEVICE_NAME"
+        OUT_DIR="${{ steps.pwd.outputs.workspace-folder }}/AERA_16.0/out/target/product/$DEVICE_NAME"
         cd "$OUT_DIR"
 
         # Remove stale md5 files generated before renaming
@@ -187,7 +177,7 @@ jobs:
     - name: Check the output directory before uploading
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
       run: |
-        OUT_DIR="${{ steps.pwd.outputs.workspace-folder }}/AERA_src/out/target/product/$DEVICE_NAME"
+        OUT_DIR="${{ steps.pwd.outputs.workspace-folder }}/AERA_16.0/out/target/product/$DEVICE_NAME"
         ls -la "$OUT_DIR"
 
     - name: Upload to Release
@@ -195,11 +185,11 @@ jobs:
       with:
         fail_on_unmatched_files: false
         files: |
-          ${{ steps.pwd.outputs.workspace-folder }}/AERA_src/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/AERA*.img
-          ${{ steps.pwd.outputs.workspace-folder }}/AERA_src/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/AERA*.zip
-          ${{ steps.pwd.outputs.workspace-folder }}/AERA_src/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/AERA*.md5
-          ${{ steps.pwd.outputs.workspace-folder }}/AERA_src/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/AERA*.sha256
-          ${{ steps.pwd.outputs.workspace-folder }}/AERA_src/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/recovery.img
+          ${{ steps.pwd.outputs.workspace-folder }}/AERA_16.0/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/AERA*.img
+          ${{ steps.pwd.outputs.workspace-folder }}/AERA_16.0/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/AERA*.zip
+          ${{ steps.pwd.outputs.workspace-folder }}/AERA_16.0/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/AERA*.md5
+          ${{ steps.pwd.outputs.workspace-folder }}/AERA_16.0/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/AERA*.sha256
+          ${{ steps.pwd.outputs.workspace-folder }}/AERA_16.0/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/recovery.img
         name: AERA Recovery for ${{ github.event.inputs.DEVICE_NAME }} // ${{ github.run_id }}
         tag_name: ${{ github.run_id }}
         body: |
