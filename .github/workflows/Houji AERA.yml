@@ -14,7 +14,7 @@ on:
       DEVICE_TREE_URL:
         description: 'DEVICE_TREE_URL'
         required: true
-        default: 'https://github.com/QCerberusQ/OFRP-device_xiaomi_houji'
+        default: 'https://github.com/QCerberusQ/android_device_xiaomi_houji-AERA'
       DEVICE_TREE_BRANCH:
         description: 'DEVICE_TREE_BRANCH'
         required: true
