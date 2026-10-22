@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       SYNC_URL:
-        description: 'SYNC_URL (AERA sync or manifest repo)'
+        description: 'SYNC_URL (AERA manifest repo)'
         required: true
-        default: 'https://github.com/AERA-Recovery/manifest.git'
+        default: 'https://github.com/AERA-Recovery/android_manifest.git'
       MANIFEST_BRANCH:
         description: 'MANIFEST_BRANCH'
         required: true
-        default: 'AERA_16.0'
+        default: 'aera-16.0'
       DEVICE_TREE_URL:
         description: 'DEVICE_TREE_URL'
         required: true
@@ -44,6 +44,18 @@ on:
         required: true
         default: 'recovery'
 
+env:
+  SYNC_URL: ${{ github.event.inputs.SYNC_URL }}
+  MANIFEST_BRANCH: ${{ github.event.inputs.MANIFEST_BRANCH }}
+  DEVICE_TREE_URL: ${{ github.event.inputs.DEVICE_TREE_URL }}
+  DEVICE_TREE_BRANCH: ${{ github.event.inputs.DEVICE_TREE_BRANCH }}
+  DEVICE_PATH: ${{ github.event.inputs.DEVICE_PATH }}
+  COMMON_TREE_URL: ${{ github.event.inputs.COMMON_TREE_URL }}
+  COMMON_PATH: ${{ github.event.inputs.COMMON_PATH }}
+  DEVICE_NAME: ${{ github.event.inputs.DEVICE_NAME }}
+  MAKEFILE_NAME: ${{ github.event.inputs.MAKEFILE_NAME }}
+  BUILD_TARGET: ${{ github.event.inputs.BUILD_TARGET }}
+
 jobs:
   build:
     if: github.event.repository.owner.id == github.event.sender.id
@@ -59,13 +71,14 @@ jobs:
       uses: rokibhasansagar/slimhub_actions@main
 
     - name: Initialize workspace
+      id: pwd
       run: |
         mkdir -p workspace
         cd workspace
-        echo "workspace-folder=$(pwd)" >> $GITHUB_OUTPUT
-      id: pwd
+        echo "workspace-folder=$(pwd)" >> "$GITHUB_OUTPUT"
 
     - name: Prepare the build environment
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
       run: |
         sudo apt update && sudo apt upgrade -y
         DEBIAN_FRONTEND=noninteractive sudo apt install -yq \
@@ -78,7 +91,6 @@ jobs:
         sudo bash setup/android_build_env.sh
         sed -i 's/cd -/cd ../g' setup/install_android_sdk.sh
         sudo bash setup/install_android_sdk.sh
-      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Install OpenJDK
       uses: actions/setup-java@v5
@@ -97,133 +109,97 @@ jobs:
           ${{ secrets.SSH_PRIVATE_KEY }}
 
     - name: Sync AERA sources and minimal manifest
-      run: |
-        AERA_DIR="${{ steps.pwd.outputs.workspace-folder }}/AERA_${{ github.event.inputs.MANIFEST_BRANCH }}"
-        mkdir -p "$AERA_DIR"
-        cd ${{ steps.pwd.outputs.workspace-folder }}
-        git clone ${{ github.event.inputs.SYNC_URL }} sync_repo
-        cd sync_repo
-        if [ -f "./aera_sync.sh" ]; then
-          chmod +x ./aera_sync.sh
-          ./aera_sync.sh --branch ${{ github.event.inputs.MANIFEST_BRANCH }} --path "$AERA_DIR"
-        elif [ -f "./orangefox_sync.sh" ]; then
-          chmod +x ./orangefox_sync.sh
-          ./orangefox_sync.sh --branch ${{ github.event.inputs.MANIFEST_BRANCH }} --path "$AERA_DIR"
-        else
-          cd "$AERA_DIR"
-          repo init --depth=1 -u ${{ github.event.inputs.SYNC_URL }} -b ${{ github.event.inputs.MANIFEST_BRANCH }}
-          repo sync -c -j$(nproc --all) --force-sync --no-clone-bundle --no-tags
-        fi
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+      run: |
+        AERA_DIR="${{ steps.pwd.outputs.workspace-folder }}/AERA_src"
+        mkdir -p "$AERA_DIR"
+        cd "$AERA_DIR"
+        repo init --depth=1 -u "$SYNC_URL" -b "$MANIFEST_BRANCH"
+        repo sync -c -j"$(nproc --all)" --force-sync --no-clone-bundle --no-tags
 
     - name: Clone device tree
-      run: |
-        cd ${{ steps.pwd.outputs.workspace-folder }}/AERA_${{ github.event.inputs.MANIFEST_BRANCH }}
-        git clone ${{ github.event.inputs.DEVICE_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.DEVICE_PATH }}
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+      run: |
+        cd "${{ steps.pwd.outputs.workspace-folder }}/AERA_src"
+        git clone "$DEVICE_TREE_URL" -b "$DEVICE_TREE_BRANCH" "./$DEVICE_PATH"
 
     - name: Clone common tree
       if: |
         github.event.inputs.COMMON_TREE_URL != '' &&
         github.event.inputs.COMMON_PATH != ''
-      run: |
-        cd ${{ steps.pwd.outputs.workspace-folder }}/AERA_${{ github.event.inputs.MANIFEST_BRANCH }}
-        git clone ${{ github.event.inputs.COMMON_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.COMMON_PATH }}
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+      run: |
+        cd "${{ steps.pwd.outputs.workspace-folder }}/AERA_src"
+        git clone "$COMMON_TREE_URL" -b "$DEVICE_TREE_BRANCH" "./$COMMON_PATH"
 
     - name: Set Swap Space
       uses: pierotofy/set-swap-space@master
       with:
         swap-size-gb: 24
 
-    - name: Patch vold Weaver AIDL wait (bounded 5s)
-      run: |
-        set -euo pipefail
-        SRC="${{ steps.pwd.outputs.workspace-folder }}/AERA_${{ github.event.inputs.MANIFEST_BRANCH }}"
-        F="$SRC/system/vold/Weaver1.cpp"
-        if [ ! -f "$F" ]; then
-          echo "NOTE: $F not found, skipping Weaver patch."
-          exit 0
-        fi
-        cp "$F" "$F.orig"
-
-        python3 - "$F" <<'PY'
-        import io, sys
-        p = sys.argv[1]
-        s = io.open(p, encoding='utf-8').read()
-        done = []
-
-        old = '    AIBinder* binder = AServiceManager_waitForService(instance.c_str());'
-        new = ('#pragma clang diagnostic push\n'
-               '#pragma clang diagnostic ignored "-Wdeprecated-declarations"\n'
-               '    // AERA: AServiceManager_getService polls for 5s then returns nullptr,\n'
-               '    // instead of waiting forever like AServiceManager_waitForService.\n'
-               '    AIBinder* binder = AServiceManager_getService(instance.c_str());\n'
-               '#pragma clang diagnostic pop')
-        if old in s:
-            s = s.replace(old, new, 1); done.append('1-bounded-aidl-wait')
-        else:
-            print('NOTE: anchor 1 already patched or differs; skipping.')
-
-        old2 = 'mDevice = ::android::hardware::weaver::V1_0::IWeaver::getService();'
-        if old2 in s:
-            s = s.replace(old2, 'mDevice = ::android::hardware::weaver::V1_0::IWeaver::tryGetService();', 1)
-            done.append('2-hidl-nonblocking')
-
-        old3 = '\tWeaverStatus status;\n\tWeaverConfig cfg;'
-        if 'mDevice->getConfig' in s and old3 in s:
-            s = s.replace(old3, '\tif (mDevice == nullptr)\n\t\treturn false;\n\n' + old3, 1)
-            done.append('3-null-guard')
-
-        if done:
-            io.open(p, 'w', encoding='utf-8', newline='\n').write(s)
-            print('applied: ' + ', '.join(done))
-        PY
-
-        diff -u "$F.orig" "$F" || true
-        rm -f "$F.orig"
-      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
-
     - name: Building AERA Recovery
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
       run: |
-        cd ${{ steps.pwd.outputs.workspace-folder }}/AERA_${{ github.event.inputs.MANIFEST_BRANCH }}
+        cd "${{ steps.pwd.outputs.workspace-folder }}/AERA_src"
 
-        export AERA_BUILD_DEVICE=${{ github.event.inputs.DEVICE_NAME }}
+        export AERA_BUILD_DEVICE="$DEVICE_NAME"
         export ALLOW_MISSING_DEPENDENCIES=true
 
         set +e
         source build/envsetup.sh
+        ENVSETUP_STATUS=$?
         set -e
+        if [ "$ENVSETUP_STATUS" -ne 0 ]; then
+          echo "ERROR: build/envsetup.sh failed with exit code $ENVSETUP_STATUS"
+          exit "$ENVSETUP_STATUS"
+        fi
 
-        lunch ${{ github.event.inputs.MAKEFILE_NAME }}-bp2a-eng
-        m -j$(nproc --all) ${{ github.event.inputs.BUILD_TARGET }}image
+        lunch "${MAKEFILE_NAME}-bp2a-eng"
+        m -j"$(nproc --all)" "${BUILD_TARGET}image"
+
+    - name: Rename outputs and regenerate checksums
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
-
-    - name: Rename outputs with Date
       run: |
         BUILD_DATE=$(TZ=Asia/Istanbul date +%Y%m%d)
-        OUT_DIR=${{ steps.pwd.outputs.workspace-folder }}/AERA_${{ github.event.inputs.MANIFEST_BRANCH }}/out/target/product/${{ github.event.inputs.DEVICE_NAME }}
-        for f in "$OUT_DIR"/AERA*.img "$OUT_DIR"/AERA*.zip; do
-          [ -e "$f" ] || continue
+        OUT_DIR="${{ steps.pwd.outputs.workspace-folder }}/AERA_src/out/target/product/$DEVICE_NAME"
+        cd "$OUT_DIR"
+
+        # Remove stale md5 files generated before renaming
+        rm -f AERA*.md5
+
+        shopt -s nullglob
+        artifacts=(AERA*.img AERA*.zip)
+        if [ "${#artifacts[@]}" -eq 0 ] && [ ! -f "recovery.img" ]; then
+          echo "ERROR: No AERA artifacts or recovery.img found in $OUT_DIR"
+          exit 1
+        fi
+
+        for f in "${artifacts[@]}"; do
           base=$(basename "$f")
           ext="${base##*.}"
           name="${base%.*}"
-          mv "$f" "$OUT_DIR/${name}-${BUILD_DATE}.${ext}"
+          new_name="${name}-${BUILD_DATE}.${ext}"
+          mv "$f" "$new_name"
+          md5sum "$new_name" > "${new_name}.md5"
+          sha256sum "$new_name" > "${new_name}.sha256"
         done
 
     - name: Check the output directory before uploading
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
       run: |
-        ls -al ${{ steps.pwd.outputs.workspace-folder }}/AERA_${{ github.event.inputs.MANIFEST_BRANCH }}/out/target/product/
-        echo
-        ls -al ${{ steps.pwd.outputs.workspace-folder }}/AERA_${{ github.event.inputs.MANIFEST_BRANCH }}/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/
+        OUT_DIR="${{ steps.pwd.outputs.workspace-folder }}/AERA_src/out/target/product/$DEVICE_NAME"
+        ls -la "$OUT_DIR"
 
     - name: Upload to Release
       uses: softprops/action-gh-release@v2
       with:
+        fail_on_unmatched_files: false
         files: |
-          ${{ steps.pwd.outputs.workspace-folder }}/AERA_${{ github.event.inputs.MANIFEST_BRANCH }}/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/AERA*.img
-          ${{ steps.pwd.outputs.workspace-folder }}/AERA_${{ github.event.inputs.MANIFEST_BRANCH }}/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/AERA*.zip
-          ${{ steps.pwd.outputs.workspace-folder }}/AERA_${{ github.event.inputs.MANIFEST_BRANCH }}/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/AERA*.md5
+          ${{ steps.pwd.outputs.workspace-folder }}/AERA_src/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/AERA*.img
+          ${{ steps.pwd.outputs.workspace-folder }}/AERA_src/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/AERA*.zip
+          ${{ steps.pwd.outputs.workspace-folder }}/AERA_src/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/AERA*.md5
+          ${{ steps.pwd.outputs.workspace-folder }}/AERA_src/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/AERA*.sha256
+          ${{ steps.pwd.outputs.workspace-folder }}/AERA_src/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/recovery.img
         name: AERA Recovery for ${{ github.event.inputs.DEVICE_NAME }} // ${{ github.run_id }}
         tag_name: ${{ github.run_id }}
         body: |
