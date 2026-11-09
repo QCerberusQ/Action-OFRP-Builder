@@ -1,0 +1,209 @@
+name: Houji AERA Recovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      SYNC_URL:
+        description: 'SYNC_URL (AERA manifest repo)'
+        required: true
+        default: 'https://github.com/AERA-Recovery/android_manifest.git'
+      MANIFEST_BRANCH:
+        description: 'MANIFEST_BRANCH'
+        required: true
+        default: 'aera-16.0'
+      DEVICE_TREE_URL:
+        description: 'DEVICE_TREE_URL'
+        required: true
+        default: 'https://github.com/QCerberusQ/android_device_xiaomi_raphael-AERA'
+      DEVICE_TREE_BRANCH:
+        description: 'DEVICE_TREE_BRANCH'
+        required: true
+        default: 'aera-16.0'
+      DEVICE_PATH:
+        description: 'DEVICE_PATH'
+        required: true
+        default: 'device/xiaomi/raphael'
+      COMMON_TREE_URL:
+        description: 'COMMON_TREE_URL (if no common tree, leave blank)'
+        required: false
+        default: ''
+      COMMON_PATH:
+        description: 'COMMON_PATH (if no common tree, leave blank)'
+        required: false
+        default: ''
+      DEVICE_NAME:
+        description: 'DEVICE_NAME'
+        required: true
+        default: 'raphael'
+      MAKEFILE_NAME:
+        description: 'MAKEFILE_NAME'
+        required: true
+        default: 'twrp_raphael'
+      BUILD_TARGET:
+        description: 'BUILD_TARGET'
+        required: true
+        default: 'recovery'
+
+env:
+  SYNC_URL: ${{ github.event.inputs.SYNC_URL }}
+  MANIFEST_BRANCH: ${{ github.event.inputs.MANIFEST_BRANCH }}
+  DEVICE_TREE_URL: ${{ github.event.inputs.DEVICE_TREE_URL }}
+  DEVICE_TREE_BRANCH: ${{ github.event.inputs.DEVICE_TREE_BRANCH }}
+  DEVICE_PATH: ${{ github.event.inputs.DEVICE_PATH }}
+  COMMON_TREE_URL: ${{ github.event.inputs.COMMON_TREE_URL }}
+  COMMON_PATH: ${{ github.event.inputs.COMMON_PATH }}
+  DEVICE_NAME: ${{ github.event.inputs.DEVICE_NAME }}
+  MAKEFILE_NAME: ${{ github.event.inputs.MAKEFILE_NAME }}
+  BUILD_TARGET: ${{ github.event.inputs.BUILD_TARGET }}
+
+jobs:
+  build:
+    if: github.event.repository.owner.id == github.event.sender.id
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+
+    - name: Check Out
+      uses: actions/checkout@v4
+
+    - name: Cleanup
+      uses: rokibhasansagar/slimhub_actions@main
+
+    - name: Initialize workspace
+      id: pwd
+      run: |
+        mkdir -p workspace
+        cd workspace
+        echo "workspace-folder=$(pwd)" >> "$GITHUB_OUTPUT"
+
+    - name: Prepare the build environment
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+      run: |
+        sudo apt update && sudo apt upgrade -y
+        DEBIAN_FRONTEND=noninteractive sudo apt install -yq \
+            linux-modules-extra-$(uname -r) \
+            git python3 python-is-python3 tar aria2 \
+            cpio lz4 lzop liblz4-tool squashfs-tools libtinfo6 \
+            openjdk-8-jdk zip unzip uuid-runtime
+        git clone https://gitlab.com/OrangeFox/misc/scripts
+        cd scripts
+        sudo bash setup/android_build_env.sh
+        sed -i 's/cd -/cd ../g' setup/install_android_sdk.sh
+        sudo bash setup/install_android_sdk.sh
+
+    - name: Install OpenJDK
+      uses: actions/setup-java@v5
+      with:
+        distribution: 'zulu'
+        java-version: '17'
+
+    - name: Sync AERA sources
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+      run: |
+        AERA_DIR="${{ steps.pwd.outputs.workspace-folder }}/AERA_16.0"
+        mkdir -p "$AERA_DIR"
+        cd "$AERA_DIR"
+        repo init --depth=1 -u "$SYNC_URL" -b "$MANIFEST_BRANCH"
+        repo sync -c --force-sync --no-clone-bundle --no-tags -j$(nproc)
+
+    - name: Clone device tree
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+      run: |
+        cd "${{ steps.pwd.outputs.workspace-folder }}/AERA_16.0"
+        git clone "$DEVICE_TREE_URL" -b "$DEVICE_TREE_BRANCH" "./$DEVICE_PATH"
+
+    - name: Clone common tree
+      if: |
+        github.event.inputs.COMMON_TREE_URL != '' &&
+        github.event.inputs.COMMON_PATH != ''
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+      run: |
+        cd "${{ steps.pwd.outputs.workspace-folder }}/AERA_16.0"
+        git clone "$COMMON_TREE_URL" -b "$DEVICE_TREE_BRANCH" "./$COMMON_PATH"
+
+    - name: Set Swap Space
+      uses: pierotofy/set-swap-space@master
+      with:
+        swap-size-gb: 20
+
+    - name: Building AERA Recovery
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+      run: |
+        cd "${{ steps.pwd.outputs.workspace-folder }}/AERA_16.0"
+
+        export AERA_BUILD_DEVICE="$DEVICE_NAME"
+        export ALLOW_MISSING_DEPENDENCIES=true
+
+        set +e
+        source build/envsetup.sh
+        ENVSETUP_STATUS=$?
+        set -e
+        if [ "$ENVSETUP_STATUS" -ne 0 ]; then
+          echo "ERROR: build/envsetup.sh failed with exit code $ENVSETUP_STATUS"
+          exit "$ENVSETUP_STATUS"
+        fi
+
+        lunch "${MAKEFILE_NAME}-bp2a-eng"
+        m -j"$(nproc --all)" "${BUILD_TARGET}image"
+
+    - name: Rename outputs and regenerate checksums
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+      run: |
+        BUILD_DATE=$(TZ=Asia/Istanbul date +%Y%m%d)
+        OUT_DIR="${{ steps.pwd.outputs.workspace-folder }}/AERA_16.0/out/target/product/$DEVICE_NAME"
+        cd "$OUT_DIR"
+
+        # Remove stale checksums generated before renaming
+        rm -f AERA*.md5 AERA*.sha256 recovery.img.md5 recovery.img.sha256
+
+        shopt -s nullglob
+        artifacts=(AERA*.img AERA*.zip)
+        if [ "${#artifacts[@]}" -eq 0 ] && [ ! -f "recovery.img" ]; then
+          echo "ERROR: No AERA artifacts or recovery.img found in $OUT_DIR"
+          exit 1
+        fi
+
+        for f in "${artifacts[@]}"; do
+          base=$(basename "$f")
+          ext="${base##*.}"
+          name="${base%.*}"
+          new_name="${name}-${BUILD_DATE}.${ext}"
+          mv "$f" "$new_name"
+          md5sum "$new_name" > "${new_name}.md5"
+          sha256sum "$new_name" > "${new_name}.sha256"
+        done
+
+        if [ -f "recovery.img" ]; then
+          md5sum "recovery.img" > "recovery.img.md5"
+          sha256sum "recovery.img" > "recovery.img.sha256"
+        fi
+
+    - name: Check the output directory before uploading
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+      run: |
+        OUT_DIR="${{ steps.pwd.outputs.workspace-folder }}/AERA_16.0/out/target/product/$DEVICE_NAME"
+        ls -la "$OUT_DIR"
+
+    - name: Upload to Release
+      uses: softprops/action-gh-release@v2
+      with:
+        fail_on_unmatched_files: false
+        files: |
+          ${{ steps.pwd.outputs.workspace-folder }}/AERA_16.0/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/AERA*.img
+          ${{ steps.pwd.outputs.workspace-folder }}/AERA_16.0/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/AERA*.zip
+          ${{ steps.pwd.outputs.workspace-folder }}/AERA_16.0/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/AERA*.md5
+          ${{ steps.pwd.outputs.workspace-folder }}/AERA_16.0/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/AERA*.sha256
+          ${{ steps.pwd.outputs.workspace-folder }}/AERA_16.0/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/recovery.img
+          ${{ steps.pwd.outputs.workspace-folder }}/AERA_16.0/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/recovery.img.md5
+          ${{ steps.pwd.outputs.workspace-folder }}/AERA_16.0/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/recovery.img.sha256
+        name: AERA Recovery for ${{ github.event.inputs.DEVICE_NAME }} // ${{ github.run_id }}
+        tag_name: ${{ github.run_id }}
+        body: |
+          **Unofficial AERA Recovery Build**
+          
+          - **Manifest:** ${{ github.event.inputs.MANIFEST_BRANCH }}
+          - **Device:** ${{ github.event.inputs.DEVICE_NAME }}
+          - **Target:** ${{ github.event.inputs.BUILD_TARGET }}image
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
