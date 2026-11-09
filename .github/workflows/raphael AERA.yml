@@ -1,4 +1,4 @@
-name: Houji AERA Recovery
+name: Raphael AERA Recovery
 
 on:
   workflow_dispatch:
